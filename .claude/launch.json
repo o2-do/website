@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "garten",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["dev-server.py"],
+      "port": 8123,
+      "autoPort": true
+    }
+  ]
+}
