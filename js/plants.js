@@ -210,6 +210,11 @@ export function planBeds(beete, paths, pathIndex, hf, occ, cfg) {
     const cx = c.x + nx * (vorne + halbT);
     const cz = c.z + nz * (vorne + halbT);
 
+    // Zu steil? Geprueft wird die Beetmitte - liegt die flach genug, liegt das
+    // Beet als Ganzes flach genug. Die vier Ecken einzeln zu pruefen waere
+    // strenger, aber ein Beet ist keine Wasserwaage.
+    if (hf.neigung(cx, cz) > cfg.maxNeigung) continue;
+
     // Alle vier Ecken muessen im Garten liegen und duerfen keinen Weg beruehren
     let frei = true;
     for (const sl of [-1, 1]) {

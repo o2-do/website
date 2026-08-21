@@ -26,14 +26,25 @@ import { stream, rand } from './rng.js';
 /**
  * Unterbrechung der Ausgleichswaelle an Kreuzungen.
  *
- * Normalerweise endet der Wall dort, wo die Wegkante auf der Flaeche eines
- * anderen Weges liegt - sonst laeuft eine senkrechte Schuerze quer durch den
- * kreuzenden Weg. Vorlaeufig abgeschaltet, um zu sehen, wie der durchgehende
- * Wall wirkt. Zum Wiedereinschalten: auf true setzen.
+ * Der Wall endet dort, wo die Wegkante auf der Flaeche eines anderen Weges
+ * liegt - sonst laeuft eine Schuerze quer durch den kreuzenden Weg und legt
+ * sich als Rampe ueber dessen Belag.
+ *
+ * Stand eine Weile auf `false`, um zu sehen, wie der durchgehende Wall wirkt.
+ * Er wirkt nicht: an jeder Einmuendung schob sich der Wall der Abkuerzung in
+ * den Rundweg hinein. Wieder an.
  */
-const WALL_AN_KREUZUNGEN_UNTERBRECHEN = false;
+const WALL_AN_KREUZUNGEN_UNTERBRECHEN = true;
 
 const dist = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
+
+/**
+ * Rangfolge der Wege. DER HAUPTWEG GEWINNT: wo zwei Flaechen denselben Boden
+ * decken, gilt seine Hoehe, und die anderen haben sich daran anzuschliessen
+ * (siehe wegknoten.js). Der Zugang zum Tor steht dazwischen - er ist ein
+ * angelegter Weg, aber der Rundweg bleibt die Hauptsache.
+ */
+export const WEG_RANG = { rund: 2, tor: 1, abk: 0 };
 
 /* ---------------- 1-3. Attraktoren ---------------- */
 
@@ -133,6 +144,58 @@ function twoOpt(order, pts) {
 /* ---------------- 5. Verrundung und Abtastung ---------------- */
 
 /**
+ * Der Mindestkurvenradius, als Vielfaches der halben Wegbreite.
+ *
+ * Unterhalb der EINFACHEN halben Breite faltet sich das Band ueber sich
+ * selbst: der innere Bandrand laeuft dann am Kruemmungsmittelpunkt vorbei auf
+ * die andere Seite. Die Planie fragt fuer so einen Randpunkt die naechste
+ * Mittellinie, findet aber die des gegenueberliegenden Kurvenastes - und
+ * uebernimmt deren Hoehe, die einen halben Bogen weiter entfernt liegt. Das
+ * ist die Sorte Naht, die keine Anschlusslogik heilen kann, weil schon die
+ * Geometrie entartet ist.
+ *
+ * Das Doppelte laesst dem inneren Rand noch eine halbe Breite Luft bis zum
+ * Mittelpunkt und ist auch gaertnerisch die untere Grenze: enger geht man
+ * einen Weg nicht, man tritt die Kurve ab.
+ */
+const MIN_RADIUS_FAKTOR = 2.0;
+
+/**
+ * Ecken, die fuer den Mindestradius zu spitz sind, ganz entfernen.
+ *
+ * Den Radius einfach hochzusetzen geht nicht: die Tangentenlaenge waechst mit
+ * `r / tan(halber Innenwinkel)`, und passt sie nicht mehr in die anliegenden
+ * Strecken, greift die Verrundung in die Nachbarecke hinueber. Wo der Platz
+ * fehlt, ist die Ecke selbst das Problem - sie faellt weg, und der Weg laeuft
+ * dort eben durch. Je Durchlauf nur die schlimmste, danach neu gerechnet: das
+ * Entfernen aendert die Winkel der Nachbarn.
+ */
+function entschaerfeEcken(pts, rMin) {
+  const list = pts.slice();
+  for (let pass = 0; pass < 40 && list.length > 4; pass++) {
+    let schlimmste = -1, fehl = 0;
+    const n = list.length;
+    for (let i = 0; i < n; i++) {
+      const prev = list[(i - 1 + n) % n], cur = list[i], next = list[(i + 1) % n];
+      const d1 = dist(prev, cur), d2 = dist(cur, next);
+      if (d1 < 1e-6 || d2 < 1e-6) continue;
+      const v1x = (prev.x - cur.x) / d1, v1z = (prev.z - cur.z) / d1;
+      const v2x = (next.x - cur.x) / d2, v2z = (next.z - cur.z) / d2;
+      const cos = Math.max(-1, Math.min(1, v1x * v2x + v1z * v2z));
+      const half = Math.acos(cos) / 2;
+      const tanH = Math.tan(half);
+      if (tanH < 1e-4) { schlimmste = i; fehl = Infinity; break; }   // Kehrtwende
+      const braucht = rMin / tanH;              // noetige Tangentenlaenge
+      const platz = Math.min(d1, d2) / 2;
+      if (braucht - platz > fehl) { fehl = braucht - platz; schlimmste = i; }
+    }
+    if (schlimmste < 0) break;
+    list.splice(schlimmste, 1);
+  }
+  return list;
+}
+
+/**
  * Polygonzug mit verrundeten Ecken. Der Radius je Ecke ist der kleinere von
  * Glaettungsradius und dem, was die beiden anliegenden Strecken hergeben
  * (Tangentenlaenge hoechstens halbe Streckenlaenge) - dieselbe Regel wie
@@ -219,7 +282,11 @@ function makePath(pts, total, closed, index, cfg, hf, liftIndex, art) {
     const tl = Math.hypot(tx, tz) || 1;
     tx /= tl; tz /= tl;
     if (k > 0) s += dist(p, pts[k - 1]);
-    samples.push({ x: p.x, z: p.z, y: hf.heightAt(p.x, p.z), tx, tz, nx: -tz, nz: tx, s });
+    // `roll` ist die Querneigung: Hoehenzuwachs je Meter seitlichem Versatz in
+    // Richtung +n. Sie bleibt null, solange der Weg fuer sich allein liegt -
+    // `verknuepfeWege` (wegknoten.js) setzt sie dort, wo er an einen anderen
+    // anschliesst und dessen Ebene uebernehmen muss.
+    samples.push({ x: p.x, z: p.z, y: hf.heightAt(p.x, p.z), tx, tz, nx: -tz, nz: tx, s, roll: 0, glon: 0 });
   }
   // Abkuerzungen haben ihren eigenen Belag, ihre eigene Kachelung und ihre
   // eigene Breite. Ab hier fragt niemand mehr `cfg` nach der Wegbreite,
@@ -244,65 +311,231 @@ function makePath(pts, total, closed, index, cfg, hf, liftIndex, art) {
 
 /* ---------------- 6. Abkuerzungen ---------------- */
 
+// Laengste zugelassene Abkuerzung, als Anteil des Gartendurchmessers. Ein
+// Trampelpfad quer durch den halben Garten ist keine Abkuerzung mehr, sondern
+// ein zweiter Hauptweg.
+const ABK_MAX_LAENGE = 0.25;
+// Mindestabstand zwischen zwei Einmuendungen, ebenso als Anteil. BEWUSST NICHT
+// mehr an die Maximallaenge gekoppelt: solange beides zusammenhing, sperrte
+// eine grosszuegigere Laengengrenze zugleich mehr Kandidaten weg, und die
+// Ausbeute SANK, je mehr man zuliess.
+const ABK_SPERRE = 0.08;
+// Wie viel Wegstrecke eine Abkuerzung mindestens sparen muss, je Meter
+// Trampelpfad.
+const ABK_MIN_GEWINN = 2.5;
+
 /**
- * Die Vorlage nimmt jedes Punktpaar, das raeumlich nah und auf dem Weg weit
- * auseinander liegt, und wirft davon per Nachbarschaftsfilter wieder welche
- * weg. Das erzeugt viele Stichwege, die kaum etwas abkuerzen, und haeuft sie
- * an derselben Engstelle.
+ * Wo lohnt sich ein Trampelpfad?
  *
- * Stattdessen wird bewertet, was eine Abkuerzung taugt: `gewinn` ist die
- * Wegstrecke, die man sich spart, je Meter Stichweg. Dann greedy in der
- * Reihenfolge des Gewinns, wobei jede angenommene Abkuerzung ihre Umgebung
- * sperrt - raeumlich wie auch entlang des Weges. So bleiben die wenigen
- * wirklich lohnenden Verbindungen uebrig, gleichmaessig verteilt.
+ * Bewertet wird, was eine Abkuerzung taugt: `gewinn` ist die Wegstrecke, die
+ * man sich spart, je Meter Stichweg. Dann greedy in der Reihenfolge des
+ * Gewinns, wobei jede angenommene Abkuerzung ihre Umgebung sperrt. So bleiben
+ * die wenigen wirklich lohnenden Verbindungen uebrig, gleichmaessig verteilt.
+ *
+ * GESUCHT WIRD AUF DER ABGETASTETEN MITTELLINIE, nicht auf den Attraktoren.
+ * Das war der Grund, warum der Garten meistens gar keine Abkuerzung bekam,
+ * obwohl reichlich moeglich gewesen waeren: die Attraktoren stehen ein Raster
+ * weit auseinander - bei den Vorgabewerten 9,6 m -, und genau so gross war die
+ * zugelassene Hoechstlaenge. Es blieben also fast nur Paare uebrig, die beides
+ * zugleich erfuellen mussten, und das taten sie kaum je. Gemessen ueber 20
+ * Startwerte: 17 Gaerten ohne eine einzige Abkuerzung, bei eingestellten vier.
+ * Auf der Mittellinie liegt alle 50 cm ein Punkt, und die Suche findet, was
+ * wirklich da ist.
+ *
+ * Abgetastet wird nur jeder zweite Meter - feiner braucht es nicht zu sein,
+ * denn zwei Kandidaten einen halben Meter nebeneinander sind dieselbe
+ * Abkuerzung, und die Sperrung wuerfe den zweiten ohnehin weg.
  */
-function planShortcuts(order, pts, cfg, maxDist, minSep) {
-  const n = order.length;
+function planShortcuts(loop, cfg) {
   const want = Math.round(cfg.maxAbkuerzungen);
-  if (want <= 0 || n < 2 * minSep) return [];
+  if (want <= 0) return [];
 
-  // Bogenlaengen entlang der Rundreise
-  const cum = new Float64Array(n + 1);
-  for (let i = 0; i < n; i++) {
-    cum[i + 1] = cum[i] + dist(pts[order[i]], pts[order[(i + 1) % n]]);
-  }
-  const perimeter = cum[n];
+  const sm = loop.samples;
+  const n = sm.length;
+  const T = loop.total;
+  const maxDist = cfg.durchmesser * ABK_MAX_LAENGE;
+  const minLen = 3 * cfg.wegBreiteAbk;      // kuerzer lohnt sich kein eigener Weg
+  const stride = Math.max(1, Math.round(1 / cfg.wegSample));
 
-  const minLen = 3 * cfg.wegBreiteAbk;   // kuerzer lohnt sich kein eigener Weg
-  const MIN_GEWINN = 3;                  // muss mindestens das Dreifache sparen
   const cand = [];
-  for (let i = 0; i < n; i++) {
-    for (let j = i + minSep; j < n; j++) {
-      if (Math.min(j - i, n - (j - i)) < minSep) continue;
-      const a = pts[order[i]], b = pts[order[j]];
+  for (let i = 0; i < n; i += stride) {
+    for (let j = i + stride; j < n; j += stride) {
+      const a = sm[i], b = sm[j];
       const d = dist(a, b);
       if (d > maxDist || d < minLen) continue;
-      const laengs = Math.min(cum[j] - cum[i], perimeter - (cum[j] - cum[i]));
+      // Laengs des Rundwegs herum - in beide Richtungen, die kuerzere zaehlt.
+      let laengs = Math.abs(b.s - a.s);
+      if (laengs > T - laengs) laengs = T - laengs;
       const gewinn = laengs / d;
-      if (gewinn < MIN_GEWINN) continue;
-      cand.push({ i, j, a, b, d, gewinn });
+      if (gewinn < ABK_MIN_GEWINN) continue;
+      cand.push({ a, b, d, gewinn });
     }
   }
   cand.sort((p, q) => q.gewinn - p.gewinn);
 
-  const sperreRaum = maxDist * 0.8;      // Abstand zwischen zwei Einmuendungen
+  const sperre = cfg.durchmesser * ABK_SPERRE;
   const out = [];
   for (const c of cand) {
     if (out.length >= want) break;
     const kollidiert = out.some((o) => {
       for (const p of [c.a, c.b]) {
-        for (const q of [o.a, o.b]) if (dist(p, q) < sperreRaum) return true;
-      }
-      for (const p of [c.i, c.j]) {
-        for (const q of [o.i, o.j]) {
-          if (Math.min(Math.abs(p - q), n - Math.abs(p - q)) < minSep) return true;
-        }
+        for (const q of [o.a, o.b]) if (dist(p, q) < sperre) return true;
       }
       return false;
     });
     if (!kollidiert) out.push(c);
   }
   return out;
+}
+
+/* ---------------- Anschluss an eine fremde Wegflaeche ---------------- */
+
+/**
+ * Wie tief die Stirnkante eines einmuendenden Weges unter dem anderen liegen
+ * soll. Ein paar Zentimeter Ueberlappung sind noetig, damit an der Naht kein
+ * Streifen Wiese durchblitzt - aber eben nur ein paar: frueher waren es
+ * pauschal 12 cm, und so viel Trampelpfad lag dann sichtbar auf dem Pflaster.
+ */
+const MAUL_UEBERSTAND = 0.03;
+
+/** Abstand zur FLAECHE eines Weges; negativ heisst drauf. */
+export function flaechenAbstand(p, x, z) {
+  const sm = p.samples;
+  const segs = p.closed ? sm.length : sm.length - 1;
+  let best = Infinity;
+  for (let i = 0; i < segs; i++) {
+    const a = sm[i], b = sm[(i + 1) % sm.length];
+    const vx = b.x - a.x, vz = b.z - a.z;
+    const wx = x - a.x, wz = z - a.z;
+    const len2 = vx * vx + vz * vz;
+    let t = len2 > 0 ? (wx * vx + wz * vz) / len2 : 0;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const dx = wx - t * vx, dz = wz - t * vz;
+    const d2 = dx * dx + dz * dz;
+    if (d2 < best) best = d2;
+  }
+  return Math.sqrt(best) - p.width / 2;
+}
+
+/**
+ * Die ERSTE Stelle zwischen `von` und `bis`, an der `fn` den Zielwert kreuzt -
+ * abgeschritten, dann halbiert. Null, wenn es keine gibt.
+ *
+ * Abgeschritten und nicht bloss halbiert, weil `flaechenAbstand` laengs einer
+ * Geraden NICHT MONOTON ist: wer weit genug laeuft, durchstoesst das Band und
+ * kommt auf der anderen Seite wieder heraus. Eine blosse Halbierung ueber ein
+ * weites Intervall findet dann irgendeine der Nullstellen - oder, wenn ihre
+ * Intervallgrenzen zufaellig beide draussen liegen, gar keine und liefert
+ * stillschweigend den Rand.
+ *
+ * Die Richtung des Abschreitens entscheidet also mit, welche Kante gefunden
+ * wird, und das ist Absicht: von der Wegmitte nach aussen die Austrittskante,
+ * von draussen nach innen die dem Stichweg zugewandte.
+ */
+function querung(fn, ziel, von, bis, schritt = 0.05) {
+  const n = Math.max(2, Math.ceil(Math.abs(bis - von) / schritt));
+  const dv = (bis - von) / n;
+  const drueber = (v) => (dv > 0 ? fn(v) >= ziel : fn(v) <= ziel);
+  if (drueber(von)) return von;
+  let lo = von;
+  for (let i = 1; i <= n; i++) {
+    const v = von + dv * i;
+    if (!drueber(v)) { lo = v; continue; }
+    let hi = v;
+    for (let k = 0; k < 24; k++) {
+      const mid = (lo + hi) / 2;
+      if (drueber(mid)) hi = mid; else lo = mid;
+    }
+    return (lo + hi) / 2;
+  }
+  return null;
+}
+
+/**
+ * Von einem Punkt aus laengs (rx, rz) laufen, bis die Flaeche von `ziel`
+ * verlassen ist - abgeschritten, nicht gerechnet.
+ *
+ * Die alte Formel halbeBreite / sin(Winkel) unterstellt eine gerade Wegkante.
+ * Bei rechtwinkligem Anschluss geht das gut; bei flachem Schnittwinkel laeuft
+ * die Kuerzung mehrere Meter am gekruemmten Weg entlang, und dann stimmt sie
+ * nicht mehr. Gemessen standen einzelne Bandecken dadurch bis zu 45 cm neben
+ * dem Weg im Gras.
+ */
+export function kanteSuchen(ziel, px, pz, rx, rz, weite) {
+  const v = querung((t) => flaechenAbstand(ziel, px + rx * t, pz + rz * t),
+                    -MAUL_UEBERSTAND, 0, weite);
+  return v === null ? ziel.width / 2 : v;
+}
+
+/**
+ * Das Gegenstueck: von DRAUSSEN kommend die Stelle suchen, an der die Flaeche
+ * von `ziel` um den Ueberstand betreten ist.
+ *
+ * Zwei Funktionen und nicht eine mit Schalter, weil die beiden Faelle
+ * verschiedene Startbedingungen haben. `kanteSuchen` beginnt auf der
+ * Mittellinie, also drinnen, und sucht den Austritt; hier beginnt es draussen
+ * und sucht den Eintritt. Wer den falschen nimmt, bekommt sofort eine Antwort -
+ * naemlich den Startpunkt, der die Bedingung ja bereits erfuellt.
+ */
+export function eintrittSuchen(ziel, px, pz, rx, rz, weite) {
+  return querung((t) => -flaechenAbstand(ziel, px + rx * t, pz + rz * t),
+                 MAUL_UEBERSTAND, 0, weite);
+}
+
+/**
+ * Das Maul eines einmuendenden Weges: wie weit jede Ecke der Stirnkante laengs
+ * der eigenen Tangente verschoben wird, damit sie auf `ziel` landet.
+ *
+ * Beide Ecken werden EINZELN gesucht - das ist der Unterschied zur frueheren
+ * Formel, die einen einzigen Wert antisymmetrisch auf beide Seiten verteilte.
+ * Antisymmetrisch ist richtig, solange die Kante des anderen Weges an dieser
+ * Stelle gerade ist; ist sie gekruemmt, brauchen die beiden Ecken verschieden
+ * viel, und die Differenz stand als Spalt auf der einen und als Ueberlappung
+ * auf der anderen Seite desselben Maules.
+ *
+ * Zuletzt wird die GANZE Kante geprueft, nicht nur ihre Ecken: zwischen zwei
+ * Punkten auf einer gekruemmten Kante spannt sich eine Sehne, und die ragt in
+ * der Mitte wieder heraus. Wo das passiert, rueckt das Maul als Ganzes nach.
+ *
+ * Zurueck kommt `{ mitte, spreiz }`; `bandPunkt` setzt daraus
+ * `mitte + spreiz * sgn` zusammen - linear in `sgn`, damit die Zwischenpunkte
+ * des Stirnwalls von selbst stimmen (siehe `wallRibs`).
+ */
+export function maulAnpassen(ziel, weg, k, richtung) {
+  const e = weg.samples[k];
+  const halbe = weg.width / 2;
+  const ecke = (sgn, d) => ({
+    x: e.x + e.nx * halbe * sgn + e.tx * d,
+    z: e.z + e.nz * halbe * sgn + e.tz * d,
+  });
+  // `richtung` zeigt vom anderen Weg WEG - am Anfang laengs der Tangente, am
+  // Ende gegen sie. Alle Suchen laufen deshalb ueber `v` mit d = richtung * v,
+  // und der Flaechenabstand waechst in beiden Faellen mit v.
+  const spanne = 1.5 * ziel.width;
+  // VON AUSSEN NACH INNEN abgeschritten: gesucht ist die dem einmuendenden Weg
+  // ZUGEWANDTE Kante, nicht die dahinterliegende. Wo gar keine Querung liegt -
+  // ein Maul, das breiter ist als der Weg unter ihm -, bleibt die Kante stumpf.
+  const loese = (f) => querung(f, -MAUL_UEBERSTAND, spanne, -spanne);
+
+  const proEcke = (sgn) =>
+    loese((v) => { const q = ecke(sgn, richtung * v); return flaechenAbstand(ziel, q.x, q.z); });
+  const vM = proEcke(-1), vP = proEcke(1);
+  if (vM === null || vP === null) return { mitte: 0, spreiz: 0 };
+  const spreiz = ((vP - vM) / 2) * richtung;
+
+  const kanteMax = (v) => {
+    let mx = -Infinity;
+    for (let i = 0; i <= 8; i++) {
+      const sgn = -1 + (2 * i) / 8;
+      const q = ecke(sgn, richtung * v + spreiz * sgn);
+      const f = flaechenAbstand(ziel, q.x, q.z);
+      if (f > mx) mx = f;
+    }
+    return mx;
+  };
+  const v = loese(kanteMax);
+  if (v === null) return { mitte: 0, spreiz: 0 };
+  return { mitte: richtung * v, spreiz };
 }
 
 /* ---------------- Aufbau ---------------- */
@@ -317,105 +550,68 @@ export function buildPaths(hf, cfg) {
   const corners = order.map((i) => attractors[i]);
 
   const step = cfg.wegSample;
-  const rounded = roundCorners(corners, cfg.wegGlaettung, step * 0.5);
+  // Zu spitze Ecken zuerst entfernen, dann verrunden. Der Glaettungsradius darf
+  // dabei nicht unter den Mindestradius rutschen - er ist eine Gestaltungs-
+  // groesse, der Mindestradius eine geometrische Bedingung, und die gewinnt.
+  const rMin = (cfg.wegBreite / 2) * MIN_RADIUS_FAKTOR;
+  const ecken = entschaerfeEcken(corners, rMin);
+  const rounded = roundCorners(ecken, Math.max(cfg.wegGlaettung, rMin), step * 0.5);
   const loop = resample(rounded, step, true);
   const paths = [makePath(loop.pts, loop.total, true, 0, cfg, hf, 0)];
 
-  const cuts = planShortcuts(order, attractors, cfg, cfg.durchmesser * 0.12, 5);
-  if (cuts.length) {
-    const main = paths[0].samples;
-    const nearestSample = (p) => {
-      let best = Infinity, at = 0;
-      for (let k = 0; k < main.length; k++) {
-        const d = (main[k].x - p.x) ** 2 + (main[k].z - p.z) ** 2;
-        if (d < best) { best = d; at = k; }
-      }
-      return main[at];
-    };
+  const cuts = planShortcuts(paths[0], cfg);
+  const loopWeg = paths[0];
+  for (const c of cuts) {
+    const a = c.a, b = c.b;
+    const dx = b.x - a.x, dz = b.z - a.z;
+    const laenge = Math.hypot(dx, dz);
+    if (laenge < 1e-6) continue;
+    const ux = dx / laenge, uz = dz / laenge;
 
-    // Wie weit ein Stichweg vor der Mittellinie des Rundwegs endet.
+    // Von der Mittellinie des Rundwegs nach aussen laufen, bis seine Flaeche
+    // verlassen ist. Der Stichweg soll an dessen KANTE aufhoeren, nicht bis in
+    // die Mitte laufen - sonst liegt ein Meter Trampelpfad quer ueber dem
+    // Pflaster, und man sieht die Naht von jedem Standpunkt aus.
+    const ka = kanteSuchen(loopWeg, a.x, a.z, ux, uz, laenge);
+    const kb = kanteSuchen(loopWeg, b.x, b.z, -ux, -uz, laenge);
+    if (laenge - ka - kb < 3 * cfg.wegBreiteAbk) continue;
+
+    const von = { x: a.x + ux * ka, z: a.z + uz * ka };
+    const bis = { x: b.x - ux * kb, z: b.z - uz * kb };
+    const line = resample([von, bis], step, false);
+    if (line.total < 3 * cfg.wegBreiteAbk) continue;
+
+    // EINE ABKUERZUNG DARF DEN RUNDWEG UNTERWEGS NICHT NOCHMAL UEBERQUEREN.
     //
-    // Er soll an dessen KANTE aufhoeren, nicht bis in die Mitte laufen - sonst
-    // liegt ein Meter Trampelpfad quer ueber dem Kiesband, und man sieht die
-    // Naht von jedem Standpunkt aus. Wie weit das ist, haengt am Schnittwinkel:
-    // wer schraeg einmuendet, hat einen laengeren Weg von der Mitte bis zur
-    // Kante als wer rechtwinklig kommt, naemlich halbeBreite / sin(Winkel).
-    //
-    // Zwei Sicherungen: bei sehr flachem Winkel liefe die Rechnung davon
-    // (deshalb der Deckel), und ein paar Zentimeter Ueberstand bleiben stehen,
-    // damit an der Naht kein Spalt aufgeht statt einer Ueberlappung. Der
-    // Rundweg ist krumm, seine Kante also keine Gerade - der Schraeganschnitt
-    // trifft sie deshalb nur naeherungsweise, und ohne den Ueberstand blitzte
-    // an einer Ecke ein Streifen Wiese durch.
-    // ZWEI HALBE BREITEN, und sie gehoeren auseinandergehalten: gekuerzt wird
-    // bis an die Kante des RUNDWEGS, angeschnitten wird die Ecke des
-    // STICHWEGS. Seit beide ihre eigene Breite haben, ist das nicht mehr
-    // dieselbe Zahl.
-    const halbeHaupt = cfg.wegBreite / 2;
-    const halbeAbk = cfg.wegBreiteAbk / 2;
+    // Die Sehne zwischen zwei Punkten einer maeandernden Schlaufe kann einen
+    // dritten Ast schneiden. Was dann entsteht, ist keine Abkuerzung, sondern
+    // ein Trampelpfad, der ueber den Weg laeuft und ein Stueck weiter neben ihm
+    // wieder endet - haette man ihn an der Kreuzung enden lassen, waere er
+    // kuerzer und nuetzlicher gewesen. Gemessen war der Schaden erheblich: an
+    // so einer Stelle lagen zwei Aeste des Rundwegs 2,5 m nebeneinander und
+    // einen halben Meter auseinander in der Hoehe, und der Stichweg klemmte
+    // dazwischen. Die beiden Enden sind ausgenommen - dort SOLL er drunter
+    // liegen.
+    let quert = false;
+    for (let k = 2; k < line.pts.length - 2 && !quert; k++) {
+      quert = flaechenAbstand(loopWeg, line.pts[k].x, line.pts[k].z) < -0.05;
+    }
+    if (quert) continue;
+
+    const weg = makePath(line.pts, line.total, false, paths.length, cfg, hf, 1);
+
     // Angeschnitten wird nur, solange die Abkuerzung NICHT BREITER ist als der
     // Weg, in den sie muendet. Sonst hat der Schraeganschnitt kein Ziel: seine
     // Stirnkante soll auf der Kante des Rundwegs liegen, aber ein 3,5 m breites
     // Maul reicht an einem 0,6 m breiten Weg links und rechts ins Gras, so weit
-    // man es auch hineinschiebt. Dort ist der stumpfe Schnitt richtig - der
-    // breite Trampelpfad laeuft eben breiter aus als der Weg, den er trifft,
-    // und hat fuer sein Ende ohnehin einen eigenen Wall.
-    const schraegAn = halbeAbk <= halbeHaupt;
-    const UEBERSTAND = 0.12;
-    const DECKEL = halbeHaupt * 4;
-    const kuerzung = (probe, ux, uz) => {
-      const sin = Math.abs(probe.tx * uz - probe.tz * ux);
-      return Math.max(0, Math.min(DECKEL, halbeHaupt / Math.max(0.25, sin)) - UEBERSTAND);
-    };
-
-    /**
-     * Der Schraeganschnitt: um wie viel eine Bandecke laengs der eigenen
-     * Tangente vorruecken muss, damit sie auf der Kante des Rundwegs landet.
-     *
-     * Der Punkt der Ecke ist Stuetzstelle + n·halbe·sgn + t·d. Er soll auf der
-     * Geraden liegen, die um `halbe` neben der Mittellinie des Rundwegs laeuft.
-     * Einsetzen und nach d aufloesen ergibt d = -sgn·halbe·(n·Nm)/(t·Nm), mit
-     * Nm der Normalen des Rundwegs an dieser Stelle. Zurueck kommt der Faktor
-     * ohne das sgn - `bandPunkt` haengt es an.
-     *
-     * Gedeckelt, weil der Ausdruck bei sehr flachem Schnitt davonlaeuft: bei
-     * 15 Grad waere die Ecke schon vier Meter verschoben, und die Stuetzstellen
-     * liegen nur einen halben Meter auseinander - das Schlussviereck kippte um.
-     */
-    const schraege = (haupt, ende, h) => {
-      const nenner = ende.tx * haupt.nx + ende.tz * haupt.nz;
-      if (Math.abs(nenner) < 1e-6) return 0;
-      const d = -h * (ende.nx * haupt.nx + ende.nz * haupt.nz) / nenner;
-      return Math.max(-2 * h, Math.min(2 * h, d));
-    };
-
-    for (const c of cuts) {
-      // Die Enden auf die tatsaechliche Mittellinie ziehen: die Attraktoren
-      // liegen nach der Verrundung nicht mehr exakt auf dem Weg, ein Stichweg
-      // dorthin wuerde die Kreuzung knapp verfehlen.
-      const a = nearestSample(c.a), b = nearestSample(c.b);
-      const dx = b.x - a.x, dz = b.z - a.z;
-      const laenge = Math.hypot(dx, dz);
-      if (laenge < 1e-6) continue;
-      const ux = dx / laenge, uz = dz / laenge;
-
-      // ... und dann von beiden Enden wieder zurueck bis an die Wegkante.
-      const ka = kuerzung(a, ux, uz), kb = kuerzung(b, ux, uz);
-      if (laenge - ka - kb < 3 * cfg.wegBreiteAbk) continue;
-      const von = { x: a.x + ux * ka, z: a.z + uz * ka };
-      const bis = { x: b.x - ux * kb, z: b.z - uz * kb };
-
-      const line = resample([von, bis], step, false);
-      if (line.total < 3 * cfg.wegBreiteAbk) continue;
-      const weg = makePath(line.pts, line.total, false, paths.length, cfg, hf, 1);
-      // Und schraeg anschneiden, damit die Stirnkante auf der Kante des
-      // Rundwegs liegt statt quer dazu (siehe `bandPunkt`).
-      if (schraegAn) {
-        weg.anschnitt = { start: schraege(a, weg.samples[0], halbeAbk),
-                          ende: schraege(b, weg.samples[weg.samples.length - 1], halbeAbk) };
-      }
-      paths.push(weg);
+    // man es auch hineinschiebt.
+    if (weg.width <= loopWeg.width) {
+      weg.anschnitt = {
+        start: maulAnpassen(loopWeg, weg, 0, 1),
+        ende: maulAnpassen(loopWeg, weg, weg.samples.length - 1, -1),
+      };
     }
+    paths.push(weg);
   }
   return paths;
 }
@@ -515,24 +711,46 @@ export function buildPathMesh(path, cfg, material) {
  * einen Seite ein Zwickel Wiese zwischen beiden Baendern, waehrend die andere
  * Seite ueber die Wegkante hinausragt.
  *
- * `anschnitt` ist der Betrag, um den die Kante je Seite laengs der eigenen
- * Tangente verschoben wird - antisymmetrisch, die eine Ecke nach vorn, die
- * andere nach hinten. Damit liegt die Stirnkante genau auf der Kante des
- * Rundwegs. Weil der Versatz linear in `sgn` ist, stimmen auch die
- * Zwischenpunkte des Stirnwalls von selbst.
+ * `anschnitt` sagt, um wie viel die Kante je Seite laengs der eigenen Tangente
+ * verschoben wird: `mitte + spreiz * sgn`. Der antisymmetrische Anteil
+ * (`spreiz`) kippt die Kante in den Schnittwinkel, der gemeinsame (`mitte`)
+ * schiebt das ganze Maul so tief unter den Rundweg, dass auch die Sehne
+ * zwischen den Ecken noch drunter liegt.
+ *
+ * Frueher stand hier nur der antisymmetrische Anteil. Das ist richtig, solange
+ * die Kante des Rundwegs an dieser Stelle gerade ist - ist sie gekruemmt,
+ * brauchen die beiden Ecken verschieden viel, und die Differenz stand als
+ * Spalt auf der einen und als Ueberlappung auf der anderen Seite desselben
+ * Maules. Siehe `maul` in `buildPaths`.
+ *
+ * Weil der Versatz linear in `sgn` bleibt, stimmen die Zwischenpunkte des
+ * Stirnwalls weiterhin von selbst.
  */
 export function bandPunkt(path, k, sgn, half, lift) {
   const p = path.samples[k];
   const a = path.anschnitt;
   let d = 0;
   if (a) {
-    if (k === 0) d = a.start * sgn;
-    else if (k === path.samples.length - 1) d = a.ende * sgn;
+    if (k === 0) d = a.start.mitte + a.start.spreiz * sgn;
+    else if (k === path.samples.length - 1) d = a.ende.mitte + a.ende.spreiz * sgn;
   }
+  // Die Querneigung wirkt linear ueber den Querschnitt - deshalb `half * sgn`
+  // und nicht etwa der Betrag. Das ist auch der Grund, warum die Stirnseite
+  // eines Stichwegs von selbst stimmt: `wallRibs` faechert `sgn` dort stufenlos
+  // von +1 auf -1 durch, und die Kante kippt genau mit.
+  //
+  // Der Anschnitt verschiebt die Ecke LAENGS der Tangente, also muss auch das
+  // Laengsgefaelle mit - sonst behaelt eine um einen halben Meter vorgeschobene
+  // Ecke die Hoehe ihrer Stuetzstelle und liegt damit zweistellig daneben.
+  //
+  // `glon` ist das Gefaelle der ANSCHLUSSEBENE, hinterlegt von `verknuepfeWege`.
+  // Aus den Nachbarstuetzstellen darf es nicht genommen werden: die liegen
+  // schon in der Auslauframpe, und die ist steiler.
+  const dy = d !== 0 && p.glon ? p.glon * d : 0;
   return {
     x: p.x + p.nx * half * sgn + p.tx * d,
     z: p.z + p.nz * half * sgn + p.tz * d,
-    y: p.y + lift,
+    y: p.y + lift + p.roll * half * sgn + dy,
   };
 }
 
@@ -614,16 +832,33 @@ export function buildPathWalls(path, cfg, hf, pathIndex, material) {
   // es geht, haengt vom Gelaende am Fusspunkt ab, das aber erst mit `o`
   // feststeht - also schrittweise vergroessern, bis der Fusspunkt unter Grund
   // liegt. Nur wachsend, damit es nicht schwingt.
+  //
+  // ABER DER WAAGERECHTE VERSATZ IST GEDECKELT, und zwar auf die Breite der
+  // Boeschung neben dem Weg. Faellt das Gelaende steiler ab als 45 Grad - im
+  // Spielgarten sind das 1,4 % der Flaeche, mit Spitzen bis 48 Grad -, dann
+  // laeuft die 45-Grad-Schuerze dem Boden hinterher, ohne ihn je einzuholen:
+  // sie wird beliebig lang und legt sich dabei metertief in die Wiese, quer
+  // ueber alles, was daneben liegt. Genau das sind die Waelle, die in die Wege
+  // schneiden.
+  //
+  // Jenseits des Deckels geht es deshalb SENKRECHT nach unten. Das ist auch
+  // das richtige Bild: ein Weg, der in einen Steilhang geschnitten ist, hat
+  // talseitig eine Stuetzmauer und keine ausufernde Schuerze. Im Normalfall -
+  // fuenf Zentimeter Absatz auf flachem Grund - aendert sich nichts, denn dort
+  // kommt der Deckel nie zum Tragen.
+  const maxAus = Math.max(0.05, cfg.wegBoeschung);
+  const aus = (o) => (o < maxAus ? o : maxAus);
   const fussMass = (r, start) => {
     let o = start;
     for (let i = 0; i < 6; i++) {
-      const need = r.y - hf.heightAt(r.x + r.ox * o, r.z + r.oz * o) + tief;
+      const a = aus(o);
+      const need = r.y - hf.heightAt(r.x + r.ox * a, r.z + r.oz * a) + tief;
       if (need <= o) break;
       o = need;
     }
     return o;
   };
-  const fussPunkt = (r, o) => ({ x: r.x + r.ox * o, y: r.y - o, z: r.z + r.oz * o });
+  const fussPunkt = (r, o) => ({ x: r.x + r.ox * aus(o), y: r.y - o, z: r.z + r.oz * aus(o) });
 
   for (const strip of wallRibs(path, half, lift)) {
     const base = pos.length / 3;
@@ -643,12 +878,21 @@ export function buildPathWalls(path, cfg, hf, pathIndex, material) {
         // faellt das Gelaende auf wenigen Zentimetern in die Boeschung des
         // anderen Weges ab, und genau dort sass sonst der Schlitz.
         const steps = Math.min(12, Math.max(2, Math.ceil(Math.hypot(b.x - a.x, b.z - a.z) / 0.08)));
+        // Der GROESSTE Fehlbetrag laengs der Strecke, einmal angewandt - nicht
+        // jeder einzelne aufaddiert. Wer in derselben Runde zwoelf Abtastwerte
+        // nacheinander draufrechnet, ohne die Fusslinie dazwischen neu zu
+        // ziehen, zaehlt denselben Schlitz zwoelfmal; ueber drei Durchlaeufe
+        // und die gemeinsame Rippe `o[k2]` schaukelt sich das um den ganzen
+        // Streifen herum auf. So entstanden Schuerzen von mehreren Metern auf
+        // Gelaende von nicht einmal 30 Grad.
+        let fehlt = 0;
         for (let i = 1; i < steps; i++) {
           const f = i / steps;
           const x = a.x + (b.x - a.x) * f, z = a.z + (b.z - a.z) * f;
           const need = a.y + (b.y - a.y) * f - (hf.heightAt(x, z) - tief);
-          if (need > 0) { o[k] += need; o[k2] += need; }
+          if (need > fehlt) fehlt = need;
         }
+        if (fehlt > 0) { o[k] += fehlt; o[k2] += fehlt; }
       }
     }
     for (let k = 0; k < n; k++) o[k] = fussMass(strip[k], o[k]);
@@ -668,7 +912,10 @@ export function buildPathWalls(path, cfg, hf, pathIndex, material) {
         s += Math.hypot(r.x - q.x, r.z - q.z);
       }
       pos.push(r.x, r.y, r.z, b.x, b.y, b.z);
-      uv.push(s / tile, 0, s / tile, -(o[kk] * Math.SQRT2) / tile);
+      // Laenge der Schuerze in ihrer eigenen Ebene - bei gedeckeltem Versatz
+      // nicht mehr o * Wurzel(2), sondern die Hypotenuse aus Versatz und Abfall.
+      const schraeg = Math.hypot(aus(o[kk]), o[kk]);
+      uv.push(s / tile, 0, s / tile, -schraeg / tile);
     }
 
     // An Kreuzungen liegt die Wegkante auf der Flaeche eines anderen Weges;
@@ -744,13 +991,31 @@ export function makePathIndex(paths, cfg, cell = 1.5) {
   // Halmen ist das der Unterschied zwischen 1,6 s und 0,2 s Aufbauzeit.
   const map = new Map();
   const key = (i, j) => i * 100000 + j;
-  // [pfad, ax, az, bx, bz, ay, by, halbe] - ay/by sind die Basis-Gelaendehoehen
+  // [pfad, ax, az, bx, bz, ay, by, halbe, aRoll, bRoll] - ay/by sind die Hoehen
   // der Mittellinie, aus denen die Wegquerschnittshoehe interpoliert wird.
   //
   // Die halbe Breite steht je SEGMENT darin und nicht mehr einmal fuer alle:
   // seit die Abkuerzungen schmaler sein duerfen als der Rundweg, gibt es keine
   // Wegbreite mehr, sondern nur noch die Breite dieses Weges.
-  const STRIDE = 8;
+  //
+  // Die Querneigung steht ebenfalls je Segment darin. Solange sie ueberall
+  // null war, galt fuer den ganzen Querschnitt die Hoehe der Mittellinie und
+  // der seitliche Versatz war belanglos; seit ein Weg sich an der Einmuendung
+  // in die Ebene eines anderen legt (wegknoten.js), ist er das nicht mehr.
+  const STRIDE = 12;
+  // Die vorkommenden halben Breiten, entdoppelt. In der Praxis sind das zwei
+  // (Rundweg und Abkuerzung), hoechstens drei - und genau darauf beruht der
+  // Trick in `nearestSurface`: den Abstand zur FLAECHE zu minimieren braucht
+  // eine Wurzel, aber nur eine je Breitenklasse und Abfrage statt einer je
+  // Segment.
+  const halben = [];
+  for (const p of paths) {
+    const h = p.width / 2;
+    if (!halben.includes(h)) halben.push(h);
+  }
+  const klasse = new Map(halben.map((h, i) => [h, i]));
+  const KLASSEN = halben.length;
+
   let maxHalb = 0;
   for (const p of paths) {
     const sm = p.samples;
@@ -762,7 +1027,14 @@ export function makePathIndex(paths, cfg, cell = 1.5) {
       const k = key(Math.floor(a.x / cell), Math.floor(a.z / cell));
       let arr = map.get(k);
       if (!arr) { arr = []; map.set(k, arr); }
-      arr.push(p.index, a.x, a.z, b.x, b.z, a.y, b.y, halb);
+      // Letzter Wert: der Sehnenversatz (siehe `nearestSurface`). Er sagt, wie
+      // weit sich der Fusspunkt eines seitlich versetzten Punktes laengs der
+      // Sehne verschiebt - Sinus des halben Wendewinkels, durch die
+      // Segmentlaenge.
+      const sl = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+      const sigma = (a.nx * (b.x - a.x) + a.nz * (b.z - a.z)) / (sl * sl);
+      arr.push(p.index, a.x, a.z, b.x, b.z, a.y, b.y, halb, a.roll, b.roll,
+               (WEG_RANG[p.art] ?? 0) * 8 + klasse.get(halb), sigma);
     }
   }
   // Ein Segment ist wegSample lang; liegt es naeher als maxDist an der Abfrage,
@@ -771,13 +1043,40 @@ export function makePathIndex(paths, cfg, cell = 1.5) {
     Math.min(4, Math.max(1, Math.ceil((maxDist + cfg.wegSample) / cell)));
   const MAX_REACH = reachFor(6);
 
-  // Ergebnis der letzten Abfrage: Hoehe der Mittellinie am naechsten Punkt und
-  // die halbe Breite GENAU DIESES Weges. Beide gehoeren zusammen - die Breite
-  // eines anderen Weges wuerde die Kante an die falsche Stelle legen.
-  let lastHeight = 0;
+  // Ergebnis der letzten Abfrage. `lastHalb` ist die halbe Breite GENAU DIESES
+  // Weges - die Breite eines anderen wuerde die Kante an die falsche Stelle
+  // legen.
+  //
+  // Die Hoehe wird NICHT hier ausgerechnet, sondern nur ihre Zutaten gemerkt.
+  // `distanceTo` laeuft weit ueber hunderttausend Mal je Aufbau, und die
+  // allermeisten Aufrufer (Gras, Felsen, Staemme, Schilder) wollen ausser dem
+  // Abstand gar nichts wissen. Die Wurzel fuer den seitlichen Versatz faellt
+  // deshalb erst in `nearestSurface` an - dem einzigen Aufrufer, der die Hoehe
+  // wirklich braucht.
   let lastHalb = maxHalb;
+  // Zwei Sieger. `nah*` ist die naechstliegende Mittellinie ueberhaupt - das
+  // war schon immer so und bleibt die Grundlage fuer Abstandsfragen. `auf*`
+  // ist der RANGHOECHSTE Weg, auf dessen Flaeche der Punkt tatsaechlich liegt.
+  //
+  // Beide auseinanderzuhalten ist noetig, seit die Wege verschiedene Breiten
+  // haben. Am Rand des zwei Meter breiten Rundwegs ist dessen eigene
+  // Mittellinie einen Meter entfernt; eine Abkuerzung, die einen halben Meter
+  // daneben vorbeilaeuft, hat ihre Mittellinie naeher dran und gewinnt die
+  // Abstandsfrage - obwohl der Punkt gar nicht auf ihr liegt. Die Planie nahm
+  // dann deren Hoehe, und weil eine Abkuerzung kurz nach ihrer Einmuendung
+  // gerade dabei ist, sich vom Rundweg wegzuneigen, klaffte am Bandrand des
+  // Rundwegs bis zu einem Drittel Meter.
+  let nahArr = null, nahN = 0, nahT = 0;
+  // Je Breitenklasse der naechste Treffer. Aus diesen wenigen Kandidaten sucht
+  // `nearestSurface` dann mit ein paar Wurzeln den flaechennaechsten heraus.
+  const kD2 = new Float64Array(KLASSEN);
+  const kArr = new Array(KLASSEN);
+  const kN = new Int32Array(KLASSEN);
+  const kT = new Float64Array(KLASSEN);
+  const kRang = new Int32Array(KLASSEN);
 
-  function distanceTo(x, z, except = -1, maxDist = Infinity) {
+  function distanceTo(x, z, except = -1, maxDist = Infinity, nachKlasse = false) {
+    if (nachKlasse) { for (let i = 0; i < KLASSEN; i++) { kD2[i] = Infinity; kArr[i] = null; } }
     if (map.size === 0) return Infinity;
     const REACH = maxDist === Infinity ? MAX_REACH : reachFor(maxDist);
     const ci = Math.floor(x / cell), cj = Math.floor(z / cell);
@@ -798,8 +1097,19 @@ export function makePathIndex(paths, cfg, cell = 1.5) {
           const d2 = dx * dx + dz * dz;
           if (d2 < best) {
             best = d2;
-            lastHeight = arr[n + 5] + (arr[n + 6] - arr[n + 5]) * t;
             lastHalb = arr[n + 7];
+            nahArr = arr; nahN = n; nahT = t;
+          }
+          // Je Breitenklasse mitschreiben - ohne Wurzel, der Vergleich laeuft
+          // ueber d². Nur wenn die Hoehe wirklich gebraucht wird; fuer die weit
+          // ueber hunderttausend reinen Abstandsfragen von Gras und Felsen
+          // waere es verschenkte Arbeit.
+          if (nachKlasse) {
+            const kk = arr[n + 10] & 7;
+            if (d2 < kD2[kk]) {
+              kD2[kk] = d2; kArr[kk] = arr; kN[kk] = n; kT[kk] = t;
+              kRang[kk] = arr[n + 10] >> 3;
+            }
           }
         }
       }
@@ -822,12 +1132,82 @@ export function makePathIndex(paths, cfg, cell = 1.5) {
 
     /**
      * Abstand zur befestigten Flaeche UND deren Hoehe an dieser Stelle.
-     * Grundlage der Wegplanie: der Weg ist quer zur Laufrichtung waagerecht,
-     * also gilt fuer den ganzen Querschnitt die Hoehe der Mittellinie.
+     * Grundlage der Wegplanie (terrain.js: withPathCorridor).
+     *
+     * Die Hoehe ist die der WEGFLAECHE am Abfragepunkt, nicht die der
+     * Mittellinie: Mittellinienhoehe plus Querneigung mal seitlichem Versatz.
+     * Solange die Neigung null ist, kommt wie frueher die Mittellinienhoehe
+     * heraus.
+     *
+     * Der Versatz wird auf die halbe Breite BEGRENZT. Ausserhalb des Weges
+     * soll nicht weiter extrapoliert werden - dort setzt die Boeschung an, und
+     * die hat an der KANTE des Weges zu beginnen. Ohne den Deckel liefe die
+     * geneigte Ebene ueber die ganze Wiese weiter.
      */
     nearestSurface(x, z) {
-      const d = distanceTo(x, z);
-      return { sd: d === Infinity ? Infinity : d - lastHalb, h: lastHeight };
+      const d = distanceTo(x, z, -1, Infinity, true);
+      if (d === Infinity) return { sd: Infinity, h: 0 };
+
+      // GESUCHT IST DIE NAECHSTE FLAECHE, NICHT DIE NAECHSTE MITTELLINIE.
+      //
+      // Seit die Abkuerzungen schmaler sein duerfen als der Rundweg, ist das
+      // nicht mehr dasselbe. Ein Punkt am Rand des zwei Meter breiten Rundwegs
+      // liegt einen Meter von dessen Mittellinie entfernt - eine Abkuerzung,
+      // die 31 cm daneben vorbeilaeuft, hat ihre Mittellinie mit 81 cm naeher
+      // dran und gewann die Abfrage, obwohl der Punkt genau auf dem Rundweg
+      // liegt und gar nicht auf ihr. Die Planie legte dort die Hoehe der
+      // Abkuerzung an, und weil die kurz nach ihrer Einmuendung gerade dabei
+      // ist, sich wegzuneigen, klaffte am Rand des Rundwegs bis zu 22 cm.
+      //
+      // Bei Gleichstand entscheidet der Rang: der Hauptweg gewinnt. Das greift
+      // genau an der Kante, wo `sd` beider Wege null ist und sonst das
+      // Rundungsverhalten der Gleitkommazahlen entschiede.
+      let sd = Infinity, w = -1, wRang = -1;
+      for (let i = 0; i < KLASSEN; i++) {
+        if (kArr[i] === null) continue;
+        const e = Math.sqrt(kD2[i]) - kArr[i][kN[i] + 7];
+        if (e < sd - 1e-6 || (e < sd + 1e-6 && kRang[i] > wRang)) {
+          sd = Math.min(sd, e); w = i; wRang = kRang[i];
+        }
+      }
+      if (w < 0) return { sd: d - lastHalb, h: 0 };
+      const arr = kArr[w], n = kN[w], t = kT[w];
+      const halb = arr[n + 7];
+
+      // Vorzeichenbehafteter Seitenversatz: Kreuzprodukt Segment x
+      // Abfragevektor, durch die Segmentlaenge. Positiv auf der +n-Seite -
+      // dieselbe Seite, die `bandPunkt` mit sgn = +1 meint. Auf die halbe
+      // Breite begrenzt: ausserhalb des Weges setzt die Boeschung an, und die
+      // hat an der KANTE zu beginnen, nicht auf einer bis in die Wiese
+      // verlaengerten schiefen Ebene.
+      const ax = arr[n + 1], az = arr[n + 2];
+      const vx = arr[n + 3] - ax, vz = arr[n + 4] - az;
+      const laenge = Math.hypot(vx, vz) || 1;
+      let q = (vx * (z - az) - vz * (x - ax)) / laenge;
+      if (q > halb) q = halb; else if (q < -halb) q = -halb;
+
+      // DER SEHNENVERSATZ.
+      //
+      // Das Band entsteht aus den Normalen der Stuetzstellen, dieser Index aus
+      // den Sehnen dazwischen - und auf einer engen Kurve ist das nicht
+      // dasselbe. Der Bandpunkt neben Stuetzstelle k faellt nicht senkrecht auf
+      // k zurueck, sondern ein Stueck weiter die Sehne entlang, denn die
+      // Normale steht schief zu ihr. Bei zwei Metern Wegbreite, halbmeter
+      // Abtastung und dem Mindestradius sind das ein Viertel Stuetzstelle, und
+      // bei 20 Grad Laengsgefaelle heisst ein Viertel Stuetzstelle fuenf
+      // Zentimeter falsche Hoehe - genau so viel, wie der Weg ueber der Wiese
+      // liegt. Die Wiese stach also am Bandrand durch den Belag.
+      //
+      // Der Fusspunkt auf der Sehne ist t = u + q·sigma·(1 - 2u); nach der
+      // wahren Bogenstelle u aufgeloest ergibt das die Zeile unten.
+      const beta = q * arr[n + 11];
+      let u = (t - beta) / (1 - 2 * beta);
+      if (!(u >= 0)) u = 0; else if (u > 1) u = 1;
+
+      let h = arr[n + 5] + (arr[n + 6] - arr[n + 5]) * u;
+      const roll = arr[n + 8] + (arr[n + 9] - arr[n + 8]) * u;
+      if (roll !== 0) h += roll * q;
+      return { sd, h };
     },
 
     /**
@@ -885,25 +1265,35 @@ export function torWeg(cfg, hf, paths, tor, index) {
   if (r < 1e-6) return null;
   const ux = m.x / r, uz = m.z / r;             // nach aussen
 
-  // Nach innen abschreiten, bis eine Wegflaeche erreicht ist.
+  // Nach innen abschreiten, bis eine Wegflaeche erreicht ist - grob, nur um
+  // herauszufinden, WELCHER Weg getroffen wird.
   const schritt = 0.25;
-  let innen = null;
-  for (let d = 0; d <= r; d += schritt) {
+  let ziel = null, grob = 0;
+  for (let d = 0; d <= r && !ziel; d += schritt) {
     const x = m.x - ux * d, z = m.z - uz * d;
     for (const w of paths) {
-      const halb = w.width / 2;
-      for (const s of w.samples) {
-        if (Math.hypot(s.x - x, s.z - z) <= halb) { innen = { x, z }; break; }
-      }
-      if (innen) break;
+      if (flaechenAbstand(w, x, z) <= 0) { ziel = w; grob = d; break; }
     }
-    if (innen) break;
   }
-  if (!innen) return null;
+  if (!ziel) return null;
+
+  // Und dann genau: bis der Zugang um den Ueberstand unter der Flaeche liegt.
+  // Frueher blieb es beim Vierteilmeterraster, und weil der Zugang zudem nie
+  // schraeg angeschnitten wurde, stand seine Stirnkante an neun von 24
+  // Toren mit einer Ecke bis zu 16 cm im Gras.
+  const tief = eintrittSuchen(ziel, m.x, m.z, -ux, -uz, Math.min(r, grob + 2 * ziel.width));
+  if (tief === null) return null;
+  const innen = { x: m.x - ux * tief, z: m.z - uz * tief };
 
   const aussenR = cfg.durchmesser / 2 + TOR_WEG_DRAUSSEN;
   const aussen = { x: ux * aussenR, z: uz * aussenR };
   const linie = resample([innen, aussen], cfg.wegSample, false);
   if (linie.total < cfg.wegBreite) return null;
-  return makePath(linie.pts, linie.total, false, index, cfg, hf, 1, 'tor');
+  const weg = makePath(linie.pts, linie.total, false, index, cfg, hf, 1, 'tor');
+  // Dasselbe Maul wie bei den Abkuerzungen - nur am INNEREN Ende, denn das
+  // aeussere laeuft in die Landschaft hinaus und stoesst an nichts.
+  if (weg.width <= ziel.width) {
+    weg.anschnitt = { start: maulAnpassen(ziel, weg, 0, 1), ende: { mitte: 0, spreiz: 0 } };
+  }
+  return weg;
 }

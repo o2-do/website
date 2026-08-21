@@ -48,6 +48,10 @@ export function planTrunks(paths, pathIndex, hf, cfg, occ, stammR, want) {
     if (Math.hypot(x, z) > 0.95 * R) continue;
     // nicht auf einem (anderen) Weg stehen
     if (pathIndex.surfaceDistance(x, z) < stammR) continue;
+    // und nicht am Steilhang: geprueft wird der Standpunkt des Stammes, denn
+    // genau dort wurzelt der Baum. Gemessen wird auf der PLANIERTEN Flaeche -
+    // neben dem Weg hat die Boeschung den Hang schon abgefangen.
+    if (hf.neigung(x, z) > cfg.maxNeigung) continue;
 
     // Mindestabstand untereinander ist eine Gestaltungsregel, keine Kollision -
     // deshalb weiterhin ein direkter Vergleich und nicht das Belegungsraster.

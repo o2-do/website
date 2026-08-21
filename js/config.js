@@ -5,6 +5,11 @@
 export const SCHEMA = [
   { group: 'Allgemein', key: 'seed', label: 'Startwert', type: 'text', default: 'garten-01' },
 
+  // Wie steil der Boden hoechstens sein darf, damit dort noch etwas gepflanzt
+  // wird. Gilt fuer Baeume wie fuer Beete und wird am MITTELPUNKT geprueft -
+  // ein Baum steht auf einem Punkt, und ein Beet, dessen Mitte flach liegt,
+  // liegt als Ganzes flach genug.
+  { group: 'Wiese', key: 'maxNeigung', label: 'Max. Neigung fuer Bewuchs', unit: 'Grad', type: 'range', min: 10, max: 70, step: 1, default: 40 },
   { group: 'Wiese', key: 'durchmesser', label: 'Gartendurchmesser', unit: 'm', type: 'range', min: 20, max: 200, step: 5, default: 100 },
   // Erhebung und Senke getrennt, gemessen von Null - und Null ist der Rand des
   // Gartens, an dem die Horizontscheibe anschliesst. Zusammen ergeben sie den
@@ -27,6 +32,13 @@ export const SCHEMA = [
   // angelegte Rundweg. Belag und Kachelung hat sie schon fuer sich; die Breite
   // war das Letzte, was noch am Rundweg hing.
   { group: 'Wege', key: 'wegBreiteAbk', label: 'Wegbreite Abkuerzung', unit: 'm', type: 'range', min: 0.3, max: 4, step: 0.1, default: 1.0 },
+  // Wie steil ein Weg sich an einen anderen anhaengen darf (wegknoten.js).
+  // Zwei Dinge auf einmal: wie viel Querneigung er je Wegbreite aufnehmen darf,
+  // und mit welcher Neigung er aus der planierten Stufe des Hauptwegs auf sein
+  // eigenes Gelaendeniveau zurueckkommt. Klein = lange, sanfte Anschluesse;
+  // gross = kurze, harte. Reicht die Weglaenge fuer den Auslauf nicht, wird er
+  // gestaucht - der Anschluss selbst bleibt in jedem Fall exakt.
+  { group: 'Wege', key: 'wegAnschluss', label: 'Anschluss-Zusatzneigung', unit: 'Grad je Wegbreite', type: 'range', min: 2, max: 45, step: 1, default: 10 },
   { group: 'Wege', key: 'wegBoeschung', label: 'Boeschung neben dem Weg', unit: 'm', type: 'range', min: 0.1, max: 6, step: 0.1, default: 1.5 },
   { group: 'Wege', key: 'kachelWeg', label: 'Texturkachel Weg', unit: 'm', type: 'range', min: 0.3, max: 4, step: 0.1, default: 1.5 },
   { group: 'Wege', key: 'kachelAbk', label: 'Texturkachel Abkuerzung', unit: 'm', type: 'range', min: 0.3, max: 4, step: 0.1, default: 1.0 },

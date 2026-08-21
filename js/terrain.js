@@ -73,7 +73,7 @@ export function createHeightField(cfg) {
 
   // `amplitude` ist der Gesamthub - sie sagt, wie tief der Kartenkasten unter
   // den Garten reichen muss, damit auch die tiefste Mulde darueber liegt.
-  return { heightAt, normalAt, falloff, radius: R,
+  return { heightAt, normalAt, neigung: neigungVon(heightAt), falloff, radius: R,
            amplitude: hoch + tief, hoch, tief, freq, octaves };
 }
 
@@ -89,6 +89,24 @@ export function createHeightField(cfg) {
  * Gras, Felsen, Staemme und die Kamera automatisch richtig; niemand muss vom
  * Weg wissen.
  */
+/**
+ * Hangneigung in Grad, aus zentralen Differenzen.
+ *
+ * Eigene Funktion statt `normalAt(...).y` durch den Arkuskosinus: die
+ * Platzierung von Baeumen und Beeten fragt das einige hundert Mal je Aufbau,
+ * und ein Vector3 je Abfrage nur, um am Ende eine Zahl zu bekommen, ist
+ * Verschwendung. Der Abtastabstand ist bewusst gross genug, um nicht auf jeder
+ * Grasnarbe zu zittern, und klein genug, um eine Boeschung neben dem Weg noch
+ * zu treffen.
+ */
+function neigungVon(heightAt) {
+  return function neigung(x, z, eps = 0.4) {
+    const gx = (heightAt(x + eps, z) - heightAt(x - eps, z)) / (2 * eps);
+    const gz = (heightAt(x, z + eps) - heightAt(x, z - eps)) / (2 * eps);
+    return (Math.atan(Math.hypot(gx, gz)) * 180) / Math.PI;
+  };
+}
+
 export function withPathCorridor(base, pathIndex, cfg) {
   const blend = Math.max(0.01, cfg.wegBoeschung);
 
@@ -106,7 +124,10 @@ export function withPathCorridor(base, pathIndex, cfg) {
     return new THREE.Vector3(-hx, 2 * eps, -hz).normalize();
   }
 
-  return { ...base, heightAt, normalAt, base };
+  // Die Neigung MUSS neu gebunden werden: sie soll die planierte Flaeche
+  // messen, nicht das Rohgelaende darunter - sonst gilt ein Beet neben dem Weg
+  // als zu steil, obwohl die Boeschung es laengst eingeebnet hat.
+  return { ...base, heightAt, normalAt, neigung: neigungVon(heightAt), base };
 }
 
 /**

@@ -4,6 +4,7 @@ import {
   createHeightField, withPathCorridor, buildGround, buildHorizon, buildMapMask, buildMapBox,
 } from './terrain.js';
 import { buildPaths, buildPathMesh, buildPathWalls, makePathIndex, torWeg } from './paths.js';
+import { verknuepfeWege } from './wegknoten.js';
 import { planSigns, buildSigns } from './signs.js';
 import { createOccupancy } from './occupancy.js';
 import {
@@ -129,6 +130,12 @@ export async function buildGarden(cfg, tex, onProgress = () => {}) {
   const tor = planTor(cfg, base, paths);
   const zugang = torWeg(cfg, base, paths, tor, paths.length);
   if (zugang) paths.push(zugang);
+
+  // Bis hierher folgt jeder Weg fuer sich dem Rohgelaende. Jetzt werden sie
+  // aneinander angeschlossen: wo einer in den anderen muendet, uebernimmt der
+  // rangniedere dessen Ebene - Hoehe, Laengsgefaelle und Querneigung. Das muss
+  // VOR dem Index passieren, denn der traegt beides in die Planie weiter.
+  verknuepfeWege(paths, base, cfg);
 
   const pathIndex = makePathIndex(paths, cfg);
   const hf = withPathCorridor(base, pathIndex, cfg);
