@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Landschaftssimulator</title>
+  <link rel="stylesheet" href="css/style.css">
+  <script type="importmap">
+  { "imports": { "three": "./vendor/three.module.js" } }
+  </script>
+  <!--
+    Der Baumgenerator (baumloader/baum-import.js) ist ein ES-Modul und wird von
+    js/baumloader.js importiert - er braucht hier nichts.
+
+    Der Pflanzen-Konfigurator dagegen ist noch eine klassische Datei und
+    erwartet three.js als globales THREE. Deshalb erst das Modul, das THREE
+    global hinterlegt, dann die Loader mit defer, dann main.js: aufgeschobene
+    klassische Dateien und Module laufen in Dokumentreihenfolge.
+  -->
+  <script type="module">
+    import * as THREE from 'three';
+    window.THREE = THREE;
+  </script>
+  <script defer src="plantloader/loader.js"></script>
+  <script defer src="plantloader/geometry.js"></script>
+  <script defer src="plantloader/gartenloader.js"></script>
+</head>
+<body>
+
+<div class="stage">
+  <canvas id="view"></canvas>
+
+  <div id="hud" class="hud"></div>
+
+  <div id="spinner" class="spinner-overlay">
+    <div class="spinner"></div>
+    <div id="spinner-text" class="spinner-text">Garten wird gebaut …</div>
+  </div>
+</div>
+
+<div class="navbar">
+  <button id="btn-left"    class="nav" title="30° links drehen (Pfeil links)">↰&nbsp;30°</button>
+  <button id="btn-forward" class="nav" title="1 m vorwärts (Pfeil hoch)">↑&nbsp;1&nbsp;m</button>
+  <button id="btn-back"    class="nav" title="1 m rückwärts (Pfeil runter)">↓&nbsp;1&nbsp;m</button>
+  <button id="btn-right"   class="nav" title="30° rechts drehen (Pfeil rechts)">30°&nbsp;↱</button>
+  <span class="queue">Warteschlange <b id="queue-count">0</b>/<span id="queue-max">2</span></span>
+  <span class="spacer"></span>
+  <span class="queue">Ziehen = umsehen · Doppelklick = 1 m dorthin, in der Karte hinspringen</span>
+  <button id="btn-bird" class="nav ghost" title="Übersicht von oben">Vogelperspektive</button>
+</div>
+
+<form id="params" class="params"></form>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

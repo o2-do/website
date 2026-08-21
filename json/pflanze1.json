@@ -1,0 +1,23 @@
+{
+  "format": "pflanzen-generator/grasbueschel",
+  "version": 1,
+  "name": "pflanze1",
+  "durchmesser": 901.3,
+  "winkel_haupt": 25,
+  "anzahl_segmente": 3,
+  "breite_unten": 4,
+  "breite_mitte": 14,
+  "breite_oben": 0,
+  "hoehe_mitte": 260,
+  "hoehe_oben": 700,
+  "hoehe_stil": 80,
+  "winkel_unten": 20,
+  "winkel_versatz": 13.5,
+  "grundflaeche_radius": 45,
+  "anzahl": 70,
+  "farbe_unten": "3f7a1e",
+  "farbe_oben": "a8d24e",
+  "farbverlauf_start": 0,
+  "glanz": 20,
+  "schatten": true
+}

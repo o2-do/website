@@ -1,0 +1,123 @@
+/**
+ * beet.css — Nur die Abweichungen des Beet-Konfigurators von style.css.
+ * Die Grundgestaltung (Farben, Knöpfe, Eingabefelder, Meldungen, .group/.row)
+ * kommt unverändert aus style.css, damit beide Seiten gleich aussehen.
+ */
+
+/* Der Pflanzen-Generator stapelt Ansicht über Bedienfeld. Hier steht das
+   Bedienfeld daneben: das Beet wird im EDIT-Modus in voller Höhe gebraucht. */
+#app { flex-direction: row; }
+
+#viewport {
+  flex: 1 1 auto;
+  min-height: 0;
+  background: #eef1f4;   /* wie der Szenenhintergrund */
+  border-bottom: none;
+  border-right: 1px solid var(--line);
+}
+
+#panel {
+  flex: 0 0 360px;
+  padding: 0 16px 32px;
+}
+
+#controls {
+  grid-template-columns: 1fr;   /* schmale Spalte — untereinander statt nebeneinander */
+  gap: 14px;
+}
+
+#hint-drag { color: #5d6b78; }
+
+/* ---------------- Modusumschalter ---------------- */
+
+.modes {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.modes button.mode {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  font-weight: 600;
+  letter-spacing: .06em;
+  font-size: 12px;
+  padding: 7px 14px;
+  color: var(--muted);
+}
+
+.modes button.mode + button.mode { border-left: 1px solid var(--line); }
+.modes button.mode:hover { background: #29343f; color: var(--text); }
+
+.modes button.mode.active {
+  background: var(--accent-dark);
+  color: #f2fbe9;
+}
+
+/* ---------------- Gruppen-Innenleben ---------------- */
+
+.buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.buttons + .note { margin-top: 10px; }
+
+.note {
+  margin: 8px 0 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.note code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+.value {
+  font-size: 12.5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text);
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+select {
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: #131a21;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 4px 6px;
+}
+
+.ext {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+#beet-name { width: 100%; text-align: left; }
+#tex-name { max-width: 100%; }
+
+/* Zeilen, die nur beim Kacheln Sinn ergeben */
+.row.tile-only.off { display: none; }
+
+/* Ohne Auswahl bleiben die Felder sichtbar, aber unbenutzbar — so springt das
+   Bedienfeld beim Anklicken einer Pflanze nicht in der Höhe. */
+#sel-group.empty .row { opacity: .45; }
+
+#tex-preview { flex: 0 0 auto; }
+
+@media (max-width: 900px) {
+  #app { flex-direction: column; }
+  #viewport { flex: 1 1 55%; border-right: none; border-bottom: 1px solid var(--line); }
+  #panel { flex: 1 1 45%; }
+}

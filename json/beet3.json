@@ -1,0 +1,94 @@
+{
+  "format": "gartensimulator/beet",
+  "version": 2,
+  "name": "beet",
+  "beschreibung": "Beet aus dem Beetkonfigurator",
+  "breite": 6,
+  "hoehe": 1,
+  "textur": null,
+  "kacheln": false,
+  "kachelgroesse": 0.5,
+  "kachelpixel": 512,
+  "pflanzen": [
+    {
+      "art": "pflanze3",
+      "x": 2.128,
+      "y": -0.059,
+      "rotation": 48,
+      "scale": 0.95,
+      "durchmesser": 1.082
+    },
+    {
+      "art": "pflanze3",
+      "x": 1.643,
+      "y": -0.039,
+      "rotation": 335,
+      "scale": 1,
+      "durchmesser": 1.139
+    },
+    {
+      "art": "pflanze3",
+      "x": 1.035,
+      "y": -0.02,
+      "rotation": 142,
+      "scale": 1,
+      "durchmesser": 1.139
+    },
+    {
+      "art": "pflanze3",
+      "x": -1.503,
+      "y": -0.011,
+      "rotation": 30,
+      "scale": 0.95,
+      "durchmesser": 1.082
+    },
+    {
+      "art": "pflanze3",
+      "x": 0.416,
+      "y": -0.041,
+      "rotation": 16,
+      "scale": 1,
+      "durchmesser": 1.139
+    },
+    {
+      "art": "pflanze3",
+      "x": -0.941,
+      "y": -0.038,
+      "rotation": 58,
+      "scale": 1,
+      "durchmesser": 1.139
+    },
+    {
+      "art": "pflanze3",
+      "x": -0.269,
+      "y": -0.04,
+      "rotation": 0,
+      "scale": 1,
+      "durchmesser": 1.139
+    },
+    {
+      "art": "pflanze3",
+      "x": 2.678,
+      "y": -0.048,
+      "rotation": 187,
+      "scale": 0.9,
+      "durchmesser": 1.025
+    },
+    {
+      "art": "pflanze3",
+      "x": -2.177,
+      "y": -0.064,
+      "rotation": 0,
+      "scale": 1,
+      "durchmesser": 1.139
+    },
+    {
+      "art": "pflanze3",
+      "x": -2.598,
+      "y": -0.029,
+      "rotation": 187,
+      "scale": 0.9,
+      "durchmesser": 1.025
+    }
+  ]
+}

@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Baum-Loader — Instanzen und gebrannte Schatten</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{background:#dfe6ea;overflow:hidden;
+       font-family:"Inter","Helvetica Neue",Arial,sans-serif}
+  canvas{display:block;width:100%;height:100%}
+  #tafel{position:fixed;left:14px;top:14px;max-width:470px;
+    background:rgba(247,247,243,.94);border:1px solid #d9dad0;padding:12px 14px;
+    font:11.5px/1.65 ui-monospace,Menlo,monospace;color:#1b1d18}
+  #tafel h1{font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+    margin-bottom:7px}
+  #tafel b{color:#4d7a1c}
+  #tafel .z{color:#6b6f62}
+  #karte{position:fixed;right:14px;top:14px;border:1px solid #d9dad0;
+    background:#fff;padding:6px}
+  #karte canvas{width:190px;height:190px;image-rendering:pixelated}
+  #karte div{font:10px/1.5 ui-monospace,Menlo,monospace;color:#6b6f62;
+    text-align:center;margin-top:4px}
+  .btnrow{margin-top:6px}
+  button{background:transparent;color:#1b1d18;border:1px solid #d9dad0;
+    padding:6px 10px;font:10.5px/1 ui-monospace,Menlo,monospace;
+    letter-spacing:.08em;text-transform:uppercase;cursor:pointer}
+  button:hover{border-color:#4d7a1c;color:#4d7a1c}
+  #hud{position:fixed;right:14px;bottom:12px;
+    font:10.5px/1.6 ui-monospace,Menlo,monospace;color:#6b6f62;text-align:right}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="tafel"><h1>Wald aus einer Vorlage</h1><span class="z">lädt …</span></div>
+<div id="hud">Ziehen dreht · Rad zoomt · Leertaste schaltet um</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.169.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.169.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { ladeBaumInstanzen, ansichtTafeln } from './baum-import.js';
+
+/* ===========================================================================
+   Worum es hier geht
+
+   Ein Baum wird einmal gerechnet und steht danach mehrfach in der Szene — als
+   Instanzen desselben Netzpaars. Der ganze Wald kostet zwei Zeichenaufrufe,
+   ob fünf Bäume darin stehen oder fünftausend.
+
+   Der Schatten kommt nicht aus einer Schattenkarte, sondern aus dem Paket: ein
+   graues PNG, beim Export gerechnet, das hier einmal beim Laden in eine
+   Bodenkarte gebrannt wird. Danach kostet er nichts mehr — kein zweiter
+   Durchgang, keine Lichtquelle, keine Auflösungssorgen im Nahbereich.
+
+   Die Landschaft darf dabei krumm sein. Die Bodenkarte wird nicht über die
+   Dreiecke gelegt, sondern über die Weltkoordinaten x und z abgetastet: ob der
+   Boden eben ist oder eine Kuppe hat, ändert an der Rechnung nichts.
+   =========================================================================== */
+
+const GELAENDE   = 64;     // Kantenlänge der Landschaft in Metern
+// Auflösung der Bodenkarte. Sie ist die eigentliche Schranke, nicht der Riss:
+// der liegt mit 512 px auf gut 8 m bei rund 63 px/m, die Karte hier bei 32.
+// Feiner wird es nur mit gekachelter Karte — im Spiel also eine Karte je
+// Geländekachel statt einer für alles. Was jeweils herauskommt, steht in der
+// Tafel; alles über der Auflösung des Risses wäre verschenkt.
+const KARTE_PX   = 2048;
+const GRAS_KACHEL = 16;    // Wiederholungen der Wiese über das Gelände
+
+// Ab hier wird aus dem Baum eine Tafel: ein Rechteck mit der gebackenen
+// Seitenansicht darauf. Holz, Laub und Schatten sind dann aus — der Baum kostet
+// zwei Dreiecke und sonst nichts.
+//
+// Das ist für die Laufperspektive gerechnet, in der zwanzig Meter weit sind.
+// Aus der Vogelperspektive schaut man den Tafeln von oben auf die flache Seite,
+// und das sieht aus, wie es ist. Die beiden Ansichten des Spiels sind getrennt;
+// welche Entfernung hier gilt, ist deshalb eine Sache der Ansicht und nicht
+// des Baums.
+const FERNE = 20;
+// Damit ein Baum am Rand nicht bei jedem Schritt hin und her springt, liegt die
+// Rückkehr zum Netz ein Stück näher als der Wechsel zur Tafel.
+const FERNE_BAND = 1.5;
+
+/* --- Szene ---------------------------------------------------------------- */
+
+const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('c'),
+                                           antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xdfe6ea);
+scene.fog = new THREE.Fog(0xdfe6ea, 45, 110);
+
+const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 400);
+// Auf Augenhöhe und nicht über dem Wald. Von oben herab läge jeder Baum
+// jenseits von FERNE, und man sähe fünf Tafeln und keinen einzigen Schatten —
+// die Höhe der Kamera zählt beim Abstand mit. So stehen drei Bäume im Netz und
+// zwei als Tafel, und der Unterschied ist im selben Bild zu sehen.
+camera.position.set(-6, 5.5, 16);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.target.set(-2, 1.5, 0);
+
+scene.add(new THREE.HemisphereLight(0xdff0ff, 0x6a6650, 1.5));
+const sonne = new THREE.DirectionalLight(0xfff3e0, 1.7);
+// Dieselbe Richtung, aus der der Schattenriss gerechnet wurde: Südost, 20°
+// aus der Senkrechten. In three ist +x Osten und +z Süden.
+sonne.position.set(Math.sin(2.356) * 0.34, 1, -Math.cos(2.356) * 0.34)
+     .multiplyScalar(30);
+scene.add(sonne, sonne.target);
+// Für den echten Wurf. Aus bleibt es, solange die gebackene Karte läuft.
+sonne.castShadow = false;
+sonne.shadow.mapSize.set(2048, 2048);
+{
+  const c = sonne.shadow.camera;
+  c.left = -GELAENDE/2 - 6; c.right = GELAENDE/2 + 6;
+  c.top  =  GELAENDE/2 + 6; c.bottom = -GELAENDE/2 - 6;
+  c.near = 1; c.far = 90;
+  c.updateProjectionMatrix();
+}
+sonne.shadow.bias = -0.0012;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+/* --- Die Landschaft: krumm, aus vielen Dreiecken -------------------------- */
+
+// Eine sanfte Kuppe, damit zu sehen ist, dass die Karte nicht auf eine Ebene
+// angewiesen ist.
+const hoehe = (x, z) => Math.sin(x * 0.10) * Math.cos(z * 0.085) * 1.6
+                      + Math.sin((x + z) * 0.045) * 0.9;
+
+const bodenGeo = new THREE.PlaneGeometry(GELAENDE, GELAENDE, 96, 96)
+                          .rotateX(-Math.PI / 2);
+{
+  const p = bodenGeo.attributes.position;
+  for (let i = 0; i < p.count; i++)
+    p.setY(i, hoehe(p.getX(i), p.getZ(i)));
+  bodenGeo.computeVertexNormals();
+}
+
+/* --- Der Baum ------------------------------------------------------------- */
+
+const BAEUME = [
+  { x: -11.5, z:  2.0, dreh: 0.0, groesse: 1.00, ton: [1.00, 1.00, 1.00] },
+  { x:  -3.0, z: -6.5, dreh: 2.1, groesse: 1.18, ton: [0.86, 0.62, 0.45] },
+  { x:   5.0, z:  1.5, dreh: 4.3, groesse: 0.86, ton: [1.35, 1.42, 1.12] },
+  { x:  12.0, z: -3.0, dreh: 1.2, groesse: 1.05, ton: [0.92, 1.10, 0.92] },
+  { x:   0.5, z:  8.0, dreh: 5.5, groesse: 0.72, ton: [1.15, 1.05, 0.88] }
+];
+
+const wald = await ladeBaumInstanzen('./json/baum.json', BAEUME.length);
+
+// Die Matrizen werden aufgehoben, nicht nur gesetzt: weiter unten schaltet die
+// Entfernung zwischen Netz und Tafel um, und dann muss beides jederzeit wieder
+// an seinen Platz geschrieben werden können.
+const q = new THREE.Quaternion();
+const achse = new THREE.Vector3(0, 1, 0), skal = new THREE.Vector3();
+const baumM = [];
+BAEUME.forEach((b, i) => {
+  b.y = hoehe(b.x, b.z);                       // auf das Gelände setzen
+  q.setFromAxisAngle(achse, b.dreh);
+  skal.set(b.groesse, b.groesse, b.groesse);
+  baumM[i] = new THREE.Matrix4()
+    .compose(new THREE.Vector3(b.x, b.y, b.z), q, skal);
+  wald.setze(i, baumM[i]);
+  wald.faerbe(i, new THREE.Color().setRGB(b.ton[0], b.ton[1], b.ton[2]));
+});
+wald.fertig();
+scene.add(wald);
+
+/* --- Was das Paket mitbringt ---------------------------------------------- */
+
+// Gerechnet wird hier nichts mehr. Alle drei Bilder stehen fertig in der Datei:
+// der Grundriss zum Brennen in den Boden, die Silhouette zur Sonne für den
+// echten Wurf und die Seitenansicht für die Ferne. Fehlt eines, ist die Datei
+// vor der jeweiligen Erweiterung geschrieben worden — dann bricht es hier ab
+// und sagt, welches. Ein neuer Export aus dem Konfigurator bringt sie mit.
+const zeug  = wald.userData.baum;
+const paket = zeug.config.paket || {};
+{
+  const fehlt = ['schatten', 'schattenkarte', 'ansicht'].filter(k => !paket[k]);
+  if (fehlt.length){
+    document.getElementById('tafel').innerHTML =
+      '<h1>Wald aus einer Vorlage</h1>Im Paket fehlt: <b>' + fehlt.join(', ') +
+      '</b><br><span class="z">json/baum.json ist vor dieser Erweiterung ' +
+      'geschrieben worden. Ein neuer Export aus dem Konfigurator bringt die ' +
+      'fehlenden Bilder mit.</span>';
+    throw new Error('Paket unvollständig: ' + fehlt.join(', '));
+  }
+}
+
+// Der Grundriss. Genommen wird der rohe Eintrag und nicht schattenTextur() —
+// die Karte wird hier auf einer Leinwand gebrannt, eine Textur auf der
+// Grafikkarte bräuchte dafür niemand.
+const schatten = paket.schatten;
+
+// Und dasselbe für den zweiten Weg: die Silhouette auf einer Leinwand, die
+// senkrecht auf dem Sonnenstrahl steht. Sie ist unverzerrt — gestreckt wird
+// der Schatten erst, wenn das Licht sie in der Szene auf den Boden wirft.
+const sonnenkarte = paket.schattenkarte;
+
+/* --- und in die Bodenkarte brennen ---------------------------------------- */
+
+// Der Schattenriss liegt als Deckung vor: 0 heißt freier Boden, 255 voller
+// Schatten. Für die Karte wird daraus Schwarz mit eben dieser Deckkraft —
+// dann summieren sich überlappende Kronen von selbst.
+async function alsMaske(datenadresse, px){
+  const im = new Image();
+  im.src = datenadresse;
+  await im.decode();
+  const c = document.createElement('canvas');
+  c.width = c.height = px;
+  const x = c.getContext('2d', { willReadFrequently: true });
+  x.drawImage(im, 0, 0, px, px);
+  const d = x.getImageData(0, 0, px, px);
+  for (let i = 0; i < px * px; i++){
+    d.data[i*4+3] = d.data[i*4];                 // Deckung wird Deckkraft
+    d.data[i*4] = d.data[i*4+1] = d.data[i*4+2] = 0;
+  }
+  x.putImageData(d, 0, 0);
+  return c;
+}
+
+const maske = await alsMaske(schatten.bild, schatten.px);
+
+const karte = document.createElement('canvas');
+karte.width = karte.height = KARTE_PX;
+let karteTex = null;
+
+// Die ganze Karte auf einmal. Sie wird nicht jedes Bild neu gezeichnet, sondern
+// nur, wenn ein Baum die Grenze zur Ferne überquert — dann fällt sein Stempel
+// weg oder kommt zurück. Das ist ein seltener Fall und kostet dort eine
+// Leinwand von KARTE_PX Kantenlänge samt Übertragung zur Grafikkarte.
+function zeichneBodenkarte(){
+  const x = karte.getContext('2d');
+  x.fillStyle = '#fff';                          // weiß = volles Licht
+  x.fillRect(0, 0, KARTE_PX, KARTE_PX);
+  const proMeter = KARTE_PX / GELAENDE;
+  const bx = wx => (wx + GELAENDE / 2) * proMeter;
+  const bz = wz => (wz + GELAENDE / 2) * proMeter;
+
+  for (const b of BAEUME){
+    if (b.fern) continue;                        // Tafeln werfen nichts
+    // Zwei Verschiebungen, und ihre Reihenfolge ist der ganze Witz:
+    //
+    //   versatzX/Z  kommt von der Sonne. Er steht in Weltkoordinaten und darf
+    //               nicht mitdrehen — die Sonne dreht sich nicht mit dem Baum.
+    //   mitteX/Z    ist der Mittelpunkt des Risses im Koordinatensystem des
+    //               Baums und dreht deshalb mit.
+    //
+    // Erst also im Weltmaß versetzen, dann drehen, dann das Bild ausrichten.
+    // In Bildkoordinaten zeigt z nach unten, deshalb dreht die Leinwand
+    // andersherum.
+    const k = schatten.breite * proMeter * b.groesse;
+    x.save();
+    x.translate(bx(b.x + schatten.versatzX * b.groesse),
+                bz(b.z + schatten.versatzZ * b.groesse));
+    x.rotate(-b.dreh);
+    x.translate(schatten.mitteX * proMeter * b.groesse,
+                schatten.mitteZ * proMeter * b.groesse);
+    x.drawImage(maske, -k / 2, -k / 2, k, k);
+    x.restore();
+  }
+  if (karteTex) karteTex.needsUpdate = true;
+}
+zeichneBodenkarte();
+karteTex = new THREE.CanvasTexture(karte);
+karteTex.colorSpace = THREE.NoColorSpace;
+karteTex.wrapS = karteTex.wrapT = THREE.ClampToEdgeWrapping;
+// Ohne das steht die Karte in z auf dem Kopf. three dreht eine Textur beim
+// Hochladen um (flipY), damit Bilddateien in der üblichen UV-Leserichtung
+// liegen — eine Leinwand, die hier als Karte über x/z gezeichnet wurde, will
+// aber genau nicht gedreht werden: Zeile 0 ist z = −Weite/2 und soll v = 0
+// bleiben. Gedreht wandert jeder Schatten an die gespiegelte Stelle, und weil
+// die Bäume nicht symmetrisch stehen, sieht das nach einem falschen
+// Sonnenstand aus statt nach einer Spiegelung.
+karteTex.flipY = false;
+
+/* --- Boden: Wiese mal Bodenkarte ------------------------------------------ */
+
+const gras = new THREE.TextureLoader().load('./img/wiese.jpg');
+gras.wrapS = gras.wrapT = THREE.RepeatWrapping;
+gras.colorSpace = THREE.SRGBColorSpace;
+gras.repeat.set(GRAS_KACHEL, GRAS_KACHEL);
+gras.anisotropy = renderer.capabilities.getMaxAnisotropy();
+
+const bodenMat = new THREE.MeshLambertMaterial({ map: gras });
+// Die Karte wird über die Weltkoordinaten abgetastet, nicht über die UVs des
+// Netzes. Genau das macht sie unabhängig von der Form der Landschaft: das Netz
+// darf beliebig viele Dreiecke haben und beliebig krumm sein.
+// Das Uniform-Objekt steht außerhalb und wird nur hineingereicht. Es innen
+// anzulegen wäre eine Falle: sobald sich am Material etwas ändert, was ein
+// neues Programm nötig macht — hier das Ein- und Ausschalten des Schattenwurfs
+// —, läuft onBeforeCompile erneut, legt ein zweites Uniform-Objekt an, und ein
+// von außen gehaltener Zeiger auf das erste geht ins Leere. Genau so
+// verschwanden beim Umschalten die gebackenen Schatten.
+const uKarte = { value: karteTex };
+bodenMat.onBeforeCompile = sh => {
+  sh.uniforms.uKarte = uKarte;
+  sh.uniforms.uWeite = { value: GELAENDE };
+  sh.vertexShader = sh.vertexShader
+    .replace('#include <common>', '#include <common>\nvarying vec3 vWelt;')
+    .replace('#include <project_vertex>',
+             'vWelt = (modelMatrix * vec4(transformed, 1.0)).xyz;\n#include <project_vertex>');
+  sh.fragmentShader = sh.fragmentShader
+    .replace('#include <common>',
+             '#include <common>\nvarying vec3 vWelt;\nuniform sampler2D uKarte;\nuniform float uWeite;')
+    .replace('#include <map_fragment>',
+             '#include <map_fragment>\n{\n  vec2 su = vWelt.xz / uWeite + 0.5;\n'
+           + '  diffuseColor.rgb *= texture2D(uKarte, su).rgb;\n}');
+};
+
+const boden = new THREE.Mesh(bodenGeo, bodenMat);
+boden.receiveShadow = true;
+scene.add(boden);
+
+/* --- Zweiter Weg: unsichtbare Schattenkarten, echt geworfen --------------- */
+
+// Eine Leinwand je Baum, senkrecht auf dem Sonnenstrahl, in der Kronenmitte
+// aufgehängt. Sie ist für die Kamera unsichtbar und für das Licht nicht — und
+// sie dreht sich nicht mit dem Baum mit, denn die Sonne tut es auch nicht.
+//
+// Alle zusammen sind ein InstancedMesh: ein Zeichenaufruf im Schatten-
+// durchgang für den ganzen Wald, statt Holz und Laub jedes Baums.
+const karteTextur = await new Promise(ok =>
+  new THREE.TextureLoader().load(sonnenkarte.bild, t => {
+    t.colorSpace = THREE.NoColorSpace;
+    t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+    ok(t);
+  }));
+
+const kartenMat = new THREE.MeshBasicMaterial({
+  // Der Riss steht als Deckung im Bild: hell heißt Schatten. Genau das braucht
+  // der Alphatest, um die Löcher im Laub durchzustanzen.
+  alphaMap: karteTextur, alphaTest: 0.35,
+  side: THREE.DoubleSide,            // einseitig wirft sie nichts
+  colorWrite: false, depthWrite: false
+});
+const kartenM = [];
+const karten = new THREE.InstancedMesh(
+  new THREE.PlaneGeometry(sonnenkarte.breite, sonnenkarte.breite), kartenMat, BAEUME.length);
+karten.castShadow = true;
+karten.receiveShadow = false;
+karten.frustumCulled = false;
+{
+  // Die Ebene liegt in xy und schaut nach +z; sie muss zur Sonne zeigen.
+  const nach = new THREE.Quaternion().setFromUnitVectors(
+    new THREE.Vector3(0, 0, 1),
+    new THREE.Vector3(sonnenkarte.normale.x, sonnenkarte.normale.y, sonnenkarte.normale.z));
+  const eins = new THREE.Vector3();
+  const ort  = new THREE.Vector3();
+  BAEUME.forEach((b, i) => {
+    // Ort der Karte: der Baumfuß plus der Aufhängepunkt aus dem Riss, mit der
+    // Instanzgröße skaliert. Die Drehung des Baums geht hier NICHT ein.
+    ort.set(b.x + sonnenkarte.mitte.x * b.groesse,
+            b.y + sonnenkarte.mitte.y * b.groesse,
+            b.z + sonnenkarte.mitte.z * b.groesse);
+    eins.set(b.groesse, b.groesse, b.groesse);
+    kartenM[i] = new THREE.Matrix4().compose(ort, nach, eins);
+    karten.setMatrixAt(i, kartenM[i]);
+  });
+  karten.instanceMatrix.needsUpdate = true;
+}
+karten.visible = false;
+scene.add(karten);
+
+/* --- Dritter Weg: die Seitenansicht als Tafel ----------------------------- */
+
+// Ein Bild des ganzen Baums, beim Export gerechnet: orthografisch von der
+// Seite, ohne Nebel, Sonne links oben. In der Ferne steht es an seiner Stelle.
+//
+// Alle Tafeln zusammen sind ein InstancedMesh — ein Zeichenaufruf und zwei
+// Dreiecke je Baum, gleichgültig wie viele es sind. Aufgespannt wird das
+// Rechteck im Blickraum, es steht also immer zur Kamera.
+const ansicht = paket.ansicht;
+const tafeln = await ansichtTafeln(ansicht, BAEUME.length);
+const tafelM = [];
+{
+  const dreh = new THREE.Quaternion();           // ohne Wirkung, die Tafel dreht sich selbst
+  BAEUME.forEach((b, i) => {
+    // Der Ort ist der Baumfuß plus die halbe Tafelhöhe über ihm — dieselbe
+    // Rechnung wie beim Schattenwerfer, nur senkrecht.
+    tafelM[i] = new THREE.Matrix4().compose(
+      new THREE.Vector3(b.x, b.y + ansicht.mitteY * b.groesse, b.z), dreh,
+      new THREE.Vector3(b.groesse, b.groesse, b.groesse));
+    // Dieselbe Tönung wie die Krone. Ohne sie spränge die Farbe eines Baums
+    // beim Wechsel — der Stamm bekommt sie hier mit ab, was auf zwanzig Meter
+    // niemand sieht.
+    tafeln.setColorAt(i, new THREE.Color().setRGB(b.ton[0], b.ton[1], b.ton[2]));
+  });
+  tafeln.instanceColor.needsUpdate = true;
+  scene.add(tafeln);
+}
+
+/* --- Umschalten ----------------------------------------------------------- */
+
+const weiss = new THREE.DataTexture(new Uint8Array([255,255,255,255]), 1, 1);
+weiss.needsUpdate = true;
+let echt = false;
+function schalte(){
+  echt = !echt;
+  karten.visible   = echt;
+  sonne.castShadow = echt;
+  uKarte.value = echt ? weiss : karteTex;
+  el('modus').textContent = echt
+    ? 'echter Wurf aus Schattenkarten — folgt dem Gelände, kostet einen Schattendurchgang'
+    : 'gebackene Bodenkarte — kostet nichts, ist ein starrer Stempel';
+  el('knopf').textContent = echt ? 'zur gebackenen Karte' : 'zum echten Wurf';
+}
+const el = id => document.getElementById(id);
+
+/* --- Tafel ---------------------------------------------------------------- */
+
+const st = zeug.stats;
+const holz = wald.getObjectByName('holz');
+const laub = wald.getObjectByName('laub');
+const dreiecke = (holz.geometry.index.count / 3 | 0)
+               + (laub ? laub.geometry.index.count / 3 | 0 : 0);
+document.getElementById('tafel').innerHTML =
+  '<h1>Wald aus einer Vorlage</h1>' +
+  'json/baum.json · <b>' + BAEUME.length + ' Instanzen</b>, ' +
+  'Gelände <b>' + GELAENDE + ' × ' + GELAENDE + ' m</b> aus ' +
+  '<b>' + (bodenGeo.index.count / 3 | 0) + '</b> Dreiecken<br>' +
+  '<span class="z">Zeichenaufrufe Bäume</span> <b>2</b> ' +
+  '<span class="z">(Holz + Laub, unabhängig von der Anzahl)</span><br>' +
+  '<span class="z">Dreiecke je Baum</span> <b>' + dreiecke + '</b> · ' +
+  '<span class="z">Billboards</span> <b>' + st.billboards + '</b><br>' +
+  '<span class="z">Schatten</span> <b>' + schatten.px + ' px</b> auf <b>' +
+  schatten.breite.toFixed(1) + ' m</b> <span class="z">aus dem Paket</span><br>' +
+  '<span class="z">Sonnenversatz</span> <b>' +
+  Math.hypot(schatten.versatzX, schatten.versatzZ).toFixed(2) + ' m</b> ' +
+  '<span class="z">nach Nordwesten (Krone im Mittel ' +
+  schatten.hoehe.toFixed(1) + ' m hoch)</span><br>' +
+  '<span class="z">Riss</span> <b>' +
+  Math.round(schatten.px / schatten.breite) + ' px/m</b> · ' +
+  '<span class="z">Bodenkarte</span> <b>' +
+  Math.round(KARTE_PX / GELAENDE) + ' px/m</b> ' +
+  '<span class="z">— die Karte ist die Schranke</span><br>' +
+  '<span class="z">Schattenkarte</span> <b>' + sonnenkarte.px + ' px</b> auf <b>' +
+  sonnenkarte.breite.toFixed(1) + ' m</b> ' +
+  '<span class="z">· Leinwand ' + sonnenkarte.neigung + '° zur Senkrechten, ' +
+  'unverzerrte Silhouette</span><br>' +
+  '<span class="z">Seitenansicht</span> <b>' + ansicht.pxX + ' × ' +
+  ansicht.pxY + ' px</b> auf <b>' + ansicht.breite.toFixed(1) + ' × ' +
+  ansicht.hoehe.toFixed(1) + ' m</b> <span class="z">aus dem Paket</span><br>' +
+  '<span class="z">Tafel statt Baum ab</span> <b>' + FERNE + ' m</b> · ' +
+  '<b id="stufen">–</b>' +
+  '<div style="margin-top:7px"><b id="modus"></b></div>' +
+  '<div class="btnrow"><button id="knopf"></button></div>';
+
+schalte(); schalte();      // einmal hin und zurück: setzt die Beschriftung
+el('knopf').addEventListener('click', schalte);
+addEventListener('keydown', e => { if (e.key === ' '){ e.preventDefault(); schalte(); } });
+
+const vor = document.createElement('div');
+vor.id = 'karte';
+vor.appendChild(karte);
+vor.appendChild(Object.assign(document.createElement('div'),
+  { textContent: 'Bodenkarte ' + KARTE_PX + ' px · '
+                 + Math.round(KARTE_PX / GELAENDE) + ' px/m' }));
+document.body.appendChild(vor);
+
+/* --- Nah und fern --------------------------------------------------------- */
+
+// Jenseits von FERNE steht nur noch die Tafel: Holz aus, Laub aus, Schatten
+// aus. Was das im Bild kostet, ist eine Ecke des Baums; was es spart, sind
+// seine sämtlichen Rechtecke und sein Schatten.
+//
+// Ein InstancedMesh kennt keine einzeln sichtbaren Instanzen. Wer eine
+// verschwinden lassen will, gibt ihr keine Ausdehnung — die Grafikkarte
+// verwirft sie dann, ehe ein Bildpunkt entsteht.
+const NIRGENDS = new THREE.Matrix4().makeScale(0, 0, 0);
+
+function setzeStufen(){
+  let nah = 0;
+  for (let i = 0; i < BAEUME.length; i++){
+    const f = BAEUME[i].fern;
+    if (!f) nah++;
+    wald.setze(i, f ? NIRGENDS : baumM[i]);
+    karten.setMatrixAt(i, f ? NIRGENDS : kartenM[i]);
+    tafeln.setMatrixAt(i, f ? tafelM[i] : NIRGENDS);
+  }
+  wald.fertig();
+  karten.instanceMatrix.needsUpdate = true;
+  tafeln.instanceMatrix.needsUpdate = true;
+  // Der gebackene Schatten steckt nicht im Baum, sondern in der Bodenkarte.
+  // Sie muss deshalb neu gezeichnet werden, sobald ein Stempel wegfällt oder
+  // zurückkommt — der einzige Posten an der Sache, der etwas kostet, und er
+  // fällt nur beim Überqueren der Grenze an.
+  zeichneBodenkarte();
+  const z = el('stufen');
+  if (z) z.textContent = nah + ' nah · ' + (BAEUME.length - nah) + ' fern';
+}
+
+// Gemessen wird vom Auge zum Baumfuß. Der Rückweg liegt näher als der Hinweg,
+// sonst flackerte ein Baum genau auf der Grenze.
+function pruefeStufen(){
+  let anders = false;
+  for (const b of BAEUME){
+    const d = Math.hypot(camera.position.x - b.x, camera.position.y - b.y,
+                         camera.position.z - b.z);
+    const f = b.fern ? d > FERNE - FERNE_BAND : d > FERNE;
+    if (f !== b.fern){ b.fern = f; anders = true; }
+  }
+  if (anders) setzeStufen();
+}
+
+for (const b of BAEUME) b.fern = false;
+setzeStufen();                 // setzt auch die Tafeln erst einmal beiseite
+pruefeStufen();
+
+/* --- Schleife ------------------------------------------------------------- */
+
+function resize(){
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / Math.max(1, h);
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+resize();
+
+renderer.setAnimationLoop(() => {
+  controls.update();
+  pruefeStufen();
+  renderer.render(scene, camera);
+});
+</script>
+</body>
+</html>
