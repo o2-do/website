@@ -1,10 +1,14 @@
 import * as THREE from 'three';
 import { hashSeed, stream } from './rng.js';
 import {
-  createHeightField, withPathCorridor, buildGround, buildHorizon, buildMapMask, buildMapBox,
+  createHeightField, buildHorizon, buildMapMask, buildMapBox,
 } from './terrain.js';
-import { buildPaths, buildPathMesh, buildPathWalls, makePathIndex, torWeg } from './paths.js';
+import { buildPaths, makePathIndex, torWeg } from './paths.js';
 import { verknuepfeWege } from './wegknoten.js';
+import {
+  baueNetz, verforme, ebnePfade, glaette, hoehenfeldAusNetz,
+  baueWiesenMesh, baueWegMesh,
+} from './wiesennetz.js';
 import { planSigns, buildSigns } from './signs.js';
 import { createOccupancy } from './occupancy.js';
 import {
@@ -83,18 +87,6 @@ export async function buildGarden(cfg, tex, onProgress = () => {}) {
     wireframe: cfg.drahtgitter,
     polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
   }));
-  // Der Ausgleichswall wird an Kreuzungen auch von unten gesehen -> beidseitig.
-  // Je Wegart einer, damit der Wall denselben Belag hat wie sein Band.
-  const wallMat = imGrund(new THREE.MeshStandardMaterial({
-    map: tex.weg, roughness: 1, metalness: 0, side: THREE.DoubleSide,
-    wireframe: cfg.drahtgitter,
-    polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
-  }));
-  const abkWallMat = imGrund(new THREE.MeshStandardMaterial({
-    map: tex.abk, roughness: 1, metalness: 0, side: THREE.DoubleSide,
-    wireframe: cfg.drahtgitter,
-    polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
-  }));
   // Maske und Kasten sind reine Kartengrafik: weiss, ohne Licht - und damit
   // auch ohne Schatten, denn ein Basismaterial nimmt keinen an.
   const kastenMat = new THREE.MeshBasicMaterial({
@@ -138,18 +130,30 @@ export async function buildGarden(cfg, tex, onProgress = () => {}) {
   verknuepfeWege(paths, base, cfg);
 
   const pathIndex = makePathIndex(paths, cfg);
-  const hf = withPathCorridor(base, pathIndex, cfg);
 
-  for (const p of paths) {
+  // DAS NETZ. Erst in der Ebene: Gitter legen, Wegbaender darauf zeichnen,
+  // Schnittflaechen bestimmen. Danach steht der Punktsatz fest, und die drei
+  // Durchgaenge verschieben die Punkte nur noch senkrecht.
+  //
+  // Weil Wiese und Wegband sich an der Kante DIESELBEN Punkte teilen, kann dort
+  // weder eine Fuge aufgehen noch eines durch das andere stossen. Die ganze
+  // frueher noetige Kette - Weg anheben, Ausgleichswall, Untergriff, Saum -
+  // ist damit hinfaellig.
+  const netz = baueNetz(paths, cfg);
+  verforme(netz.netz, base);
+  ebnePfade(netz.netz, paths, cfg);
+  glaette(netz.netz, netz.wiese, cfg);
+  const alleDreiecke = netz.wiese.concat(...netz.baender);
+  const hf = hoehenfeldAusNetz(netz.netz, alleDreiecke, base, cfg);
+
+  paths.forEach((p, i) => {
     // Der Zugang zum Tor ist ein angelegter Weg, keine Abkuerzung - er bekommt
     // denselben Belag wie der Rundweg (siehe `makePath`).
     const wieRund = p.closed || p.art === 'tor';
-    const mesh = buildPathMesh(p, cfg, wieRund ? wegMat : abkMat);
+    const mesh = baueWegMesh(netz.netz, p, netz.kante[i], cfg, wieRund ? wegMat : abkMat);
     mesh.receiveShadow = true;
     group.add(mesh);
-    const wall = buildPathWalls(p, cfg, hf, pathIndex, wieRund ? wallMat : abkWallMat);
-    if (wall) { wall.receiveShadow = true; group.add(wall); }
-  }
+  });
   // Belegungsraster: wer zuerst platziert wird, sperrt seine Zellen.
   // Reihenfolge: Weg -> Baumstamm -> Fels -> Grasbueschel
   const occ = createOccupancy(hf.radius, cfg.rasterWeite);
@@ -171,7 +175,7 @@ export async function buildGarden(cfg, tex, onProgress = () => {}) {
   tPhase = performance.now();
 
   onProgress('Wiese …');
-  const ground = buildGround(hf, cfg, wieseMat);
+  const ground = baueWiesenMesh(netz.netz, netz.wiese, cfg, wieseMat);
   ground.receiveShadow = true;
   group.add(ground);
   // Die weite Horizontscheibe fuer die Augenperspektive; in der Karte deckt
@@ -332,7 +336,7 @@ export async function buildGarden(cfg, tex, onProgress = () => {}) {
     stats.vertices += p.count * count;
     stats.dreiecke += (o.geometry.index ? o.geometry.index.count / 3 : p.count / 3) * count;
   });
-  stats.gitter = ground.userData.segments;
+  stats.gitter = netz.seg;
   stats.ms = Math.round(performance.now() - t0 - yielded);   // reine Rechenzeit
 
   // `signs` sind die Schildflaechen (fuer setSignName), `signPlan` Position und

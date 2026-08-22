@@ -205,12 +205,22 @@ export function normalize(cfg) {
   c.waldRadius = Math.min(Math.max(R * c.waldAbstand, R * 1.45), c.horizont * 0.95);
 
   c.wegSample = 0.5;        // Abtastschritt der Mittellinie in m
-  // Wege und Abkuerzungen liegen 5 cm ueber der Wiese - ein sichtbarer Absatz,
-  // kein blosser Kniff gegen Z-Fighting. Der Ausgleichswall faengt ihn als
-  // 45-Grad-Boeschung nach aussen ab (siehe `buildPathWalls`); bei den
-  // Abkuerzungen auch an den Stirnseiten.
-  c.wegHoehe = 0.05;
-  c.wegWallTiefe = 0.03;    // wie weit der Ausgleichswall unter das Gelaende reicht
+  // DER WEG LIEGT IN DER WIESE, NICHT DARAUF.
+  //
+  // Hier standen einmal 5 cm, und der Kommentar daneben nannte sie einen
+  // sichtbaren Absatz. Das war eine nachtraegliche Erklaerung: gebraucht wurden
+  // sie, weil die Wiese als durchgehendes Gitter unter den Waegen lag und bei
+  // kraeftigem Gelaende durch den Belag stach. Der Absatz brauchte dann einen
+  // Ausgleichswall, der ihn abfing, und der Wall wurde auf steilem Hang
+  // metertief.
+  //
+  // Seit die Wiese an der Wegkante geschnitten wird (terrain.js:
+  // `buildGround`), faellt die ganze Kette weg. Bleibt eine Null - wer wieder
+  // einen Absatz will, setzt sie hoch; die Wiese schliesst dann eben tiefer an.
+  c.wegHoehe = 0;
+  // Beete liegen weiterhin AUF der Wiese: sie sind keine geschnittene Flaeche,
+  // sondern ein eigenes kleines Gitter darueber. Ohne Absatz flackerten sie.
+  c.beetHoehe = 0.02;
   c.felsAbstandWeg = 0.8;   // Mindestabstand Fels zur Wegkante in m
   return c;
 }

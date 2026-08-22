@@ -334,7 +334,7 @@ export function buildBedFloors(plaetze, hf, cfg, imGrund, sektoren) {
           const z = p.cz + p.tz * l + p.nz * t;
           // Wie der Weg: knapp ueber dem Gelaende, den Rest macht der
           // polygonOffset des Materials.
-          pos.push(x, hf.heightAt(x, z) + cfg.wegHoehe, z);
+          pos.push(x, hf.heightAt(x, z) + cfg.beetHoehe, z);
           uv.push(u, v);
         }
       }

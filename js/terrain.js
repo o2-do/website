@@ -71,92 +71,20 @@ export function createHeightField(cfg) {
     return new THREE.Vector3(-hx, 2 * eps, -hz).normalize();
   }
 
-  // `amplitude` ist der Gesamthub - sie sagt, wie tief der Kartenkasten unter
-  // den Garten reichen muss, damit auch die tiefste Mulde darueber liegt.
-  return { heightAt, normalAt, neigung: neigungVon(heightAt), falloff, radius: R,
-           amplitude: hoch + tief, hoch, tief, freq, octaves };
-}
-
-/**
- * Zweite Stufe des Hoehenfelds: die Wegplanie.
- *
- * Der Weg ist quer zur Laufrichtung waagerecht, fuer den ganzen Querschnitt
- * gilt also die Hoehe seiner Mittellinie. Damit die Wiese daran anschliesst,
- * wird sie in einem Streifen der Breite `wegBoeschung` von der Weghoehe zur
- * Gelaendehoehe ueberblendet - das ergibt die Boeschung neben dem Weg.
- *
- * Weil das Ergebnis DIE Hoehenreferenz der Szene ist (PLAN.md L1), sitzen
- * Gras, Felsen, Staemme und die Kamera automatisch richtig; niemand muss vom
- * Weg wissen.
- */
-/**
- * Hangneigung in Grad, aus zentralen Differenzen.
- *
- * Eigene Funktion statt `normalAt(...).y` durch den Arkuskosinus: die
- * Platzierung von Baeumen und Beeten fragt das einige hundert Mal je Aufbau,
- * und ein Vector3 je Abfrage nur, um am Ende eine Zahl zu bekommen, ist
- * Verschwendung. Der Abtastabstand ist bewusst gross genug, um nicht auf jeder
- * Grasnarbe zu zittern, und klein genug, um eine Boeschung neben dem Weg noch
- * zu treffen.
- */
-function neigungVon(heightAt) {
-  return function neigung(x, z, eps = 0.4) {
+  // Hangneigung in Grad, aus zentralen Differenzen. Eigene Funktion statt
+  // `normalAt(...).y` durch den Arkuskosinus: die Platzierung von Baeumen und
+  // Beeten fragt das einige hundert Mal je Aufbau, und ein Vector3 je Abfrage
+  // nur, um am Ende eine Zahl zu bekommen, ist Verschwendung.
+  function neigung(x, z, eps = 0.4) {
     const gx = (heightAt(x + eps, z) - heightAt(x - eps, z)) / (2 * eps);
     const gz = (heightAt(x, z + eps) - heightAt(x, z - eps)) / (2 * eps);
     return (Math.atan(Math.hypot(gx, gz)) * 180) / Math.PI;
-  };
-}
-
-export function withPathCorridor(base, pathIndex, cfg) {
-  const blend = Math.max(0.01, cfg.wegBoeschung);
-
-  function heightAt(x, z) {
-    const s = pathIndex.nearestSurface(x, z);
-    if (!(s.sd < blend)) return base.heightAt(x, z);   // faengt auch Infinity ab
-    if (s.sd <= 0) return s.h;
-    const t = smoothstep(0, 1, s.sd / blend);
-    return s.h + (base.heightAt(x, z) - s.h) * t;
   }
 
-  function normalAt(x, z, eps = 0.25) {
-    const hx = heightAt(x + eps, z) - heightAt(x - eps, z);
-    const hz = heightAt(x, z + eps) - heightAt(x, z - eps);
-    return new THREE.Vector3(-hx, 2 * eps, -hz).normalize();
-  }
-
-  // Die Neigung MUSS neu gebunden werden: sie soll die planierte Flaeche
-  // messen, nicht das Rohgelaende darunter - sonst gilt ein Beet neben dem Weg
-  // als zu steil, obwohl die Boeschung es laengst eingeebnet hat.
-  return { ...base, heightAt, normalAt, neigung: neigungVon(heightAt), base };
-}
-
-/**
- * Quadratgitter D x D, verformt. Der Falloff druckt den kompletten Rand
- * (inkl. Ecken, r >= R) auf exakt y = 0 -> nahtloser Anschluss an den Horizont.
- */
-export function buildGround(hf, cfg, material) {
-  const size = cfg.durchmesser;
-  const seg = Math.min(1024, Math.max(8, Math.round(size / cfg.gitter)));
-  const geo = new THREE.PlaneGeometry(size, size, seg, seg);
-  geo.rotateX(-Math.PI / 2);
-
-  const pos = geo.attributes.position;
-  const uv = geo.attributes.uv;
-  const tile = cfg.kachelWiese;
-  for (let i = 0; i < pos.count; i++) {
-    const x = pos.getX(i), z = pos.getZ(i);
-    pos.setY(i, hf.heightAt(x, z));
-    uv.setXY(i, x / tile, z / tile);
-  }
-  pos.needsUpdate = true;
-  uv.needsUpdate = true;
-  geo.computeVertexNormals();
-  geo.computeBoundingSphere();
-
-  const mesh = new THREE.Mesh(geo, material);
-  mesh.name = 'boden';
-  mesh.userData.segments = seg;
-  return mesh;
+  // `amplitude` ist der Gesamthub - sie sagt, wie tief der Kartenkasten unter
+  // den Garten reichen muss, damit auch die tiefste Mulde darueber liegt.
+  return { heightAt, normalAt, neigung, falloff, radius: R,
+           amplitude: hoch + tief, hoch, tief, freq, octaves };
 }
 
 /**

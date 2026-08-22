@@ -23,19 +23,6 @@ import { stream, rand } from './rng.js';
  *   { index, closed, samples: [{x, z, y, tx, tz, nx, nz, s}], total, width }
  */
 
-/**
- * Unterbrechung der Ausgleichswaelle an Kreuzungen.
- *
- * Der Wall endet dort, wo die Wegkante auf der Flaeche eines anderen Weges
- * liegt - sonst laeuft eine Schuerze quer durch den kreuzenden Weg und legt
- * sich als Rampe ueber dessen Belag.
- *
- * Stand eine Weile auf `false`, um zu sehen, wie der durchgehende Wall wirkt.
- * Er wirkt nicht: an jeder Einmuendung schob sich der Wall der Abkuerzung in
- * den Rundweg hinein. Wieder an.
- */
-const WALL_AN_KREUZUNGEN_UNTERBRECHEN = true;
-
 const dist = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
 
 /**
@@ -498,8 +485,7 @@ export function eintrittSuchen(ziel, px, pz, rx, rz, weite) {
  * der Mitte wieder heraus. Wo das passiert, rueckt das Maul als Ganzes nach.
  *
  * Zurueck kommt `{ mitte, spreiz }`; `bandPunkt` setzt daraus
- * `mitte + spreiz * sgn` zusammen - linear in `sgn`, damit die Zwischenpunkte
- * des Stirnwalls von selbst stimmen (siehe `wallRibs`).
+ * `mitte + spreiz * sgn` zusammen.
  */
 export function maulAnpassen(ziel, weg, k, richtung) {
   const e = weg.samples[k];
@@ -617,92 +603,6 @@ export function buildPaths(hf, cfg) {
 }
 
 /**
- * Band entlang der Mittellinie. Beim Rundweg schliesst das letzte Segment
- * zurueck zum ersten Sample, beim Stichweg nicht.
- *
- * Beide Randvertices bekommen die Hoehe der Mittellinie - der Weg ist damit
- * quer zur Laufrichtung exakt waagerecht und steigt nur in Wegrichtung. Dass
- * er trotzdem im Gelaende liegt, besorgt die Wegplanie im Hoehenfeld
- * (terrain.js: withPathCorridor), die die Wiese seitlich an diese Hoehe
- * heranzieht.
- *
- * Die Textur laeuft ueber die Bogenlaenge und kachelt endlos mit dem Weg mit.
- */
-export function buildPathMesh(path, cfg, material) {
-  const sm = path.samples;
-  const m = sm.length;
-  const half = path.width / 2;
-  const tile = path.kachel;
-  const lift = pathLift(cfg, path);
-
-  // DIE NAHT DES RUNDWEGS BRAUCHT EIGENE ECKPUNKTE.
-  //
-  // Die Textur laeuft ueber die Bogenlaenge: v = s / kachel. Beim geschlossenen
-  // Weg schliesst das letzte Viereck an Stuetzstelle 0 an, und deren s ist 0 -
-  // das eine Viereck spannte damit die gesamte Kachelung des ganzen Rundwegs
-  // auf 50 cm zusammen. Die Grafikkarte greift dafuer zur groebsten
-  // Mipmap-Stufe, und heraus kam ein einfarbig graues Band quer ueber den Weg,
-  // genau am Startpunkt des Spaziergangs.
-  //
-  // Abhilfe: die erste Stuetzstelle ein zweites Mal ausgeben, diesmal mit
-  // s = Gesamtlaenge. Geometrisch derselbe Punkt, in der Textur der richtige.
-  const n = path.closed ? m + 1 : m;
-
-  const pos = new Float32Array(n * 2 * 3);
-  const uv = new Float32Array(n * 2 * 2);
-  const idx = [];
-
-  for (let k = 0; k < n; k++) {
-    const p = sm[k % m];
-    const s = (k === m) ? path.total : p.s;
-    for (let side = 0; side < 2; side++) {
-      const sgn = side === 0 ? -1 : 1;
-      const e = bandPunkt(path, k % m, sgn, half, lift);
-      const o = (k * 2 + side) * 3;
-      pos[o] = e.x;
-      pos[o + 1] = e.y;               // Mittellinienhoehe -> Querschnitt waagerecht
-      pos[o + 2] = e.z;
-      const u = (k * 2 + side) * 2;
-      uv[u] = (sgn * half) / tile + 0.5;
-      uv[u + 1] = s / tile;
-    }
-  }
-  // Wicklung gegen den Uhrzeigersinn von oben -> Flaechennormale +Y. Andersherum
-  // wird das Band als Rueckseite weggeculled und ist nur im Drahtgitter sichtbar.
-  for (let k = 0; k < n - 1; k++) {
-    const k2 = k + 1;
-    const a = k * 2, b = k * 2 + 1, c = k2 * 2, d = k2 * 2 + 1;
-    idx.push(a, b, c, b, d, c);
-  }
-
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-  geo.setIndex(idx);
-  geo.computeVertexNormals();
-  geo.computeBoundingSphere();
-
-  const mesh = new THREE.Mesh(geo, material);
-  mesh.name = `weg_${path.index}`;
-  return mesh;
-}
-
-/* ---------------- Ausgleichswall ---------------- */
-
-/**
- * Der Wall ist eine Folge von "Rippen": Oberkante auf der Bandkante,
- * Unterkante unter 45 Grad nach aussen-unten bis unter das Gelaende.
- * `ox/oz` ist die waagerechte Aussenrichtung der Rippe.
- *
- * Die Reihenfolge im Streifen muss so sein, dass die Aussenrichtung die um
- * 90 Grad gedrehte Laufrichtung ist - sonst zeigen die Normalen nach innen.
- * Beim Rundweg sind das zwei geschlossene Streifen (links und rechts), beim
- * Stichweg ein einziger, der einmal um das ganze Band herumlaeuft: rechte
- * Seite vorwaerts, Eckfaecher, Stirnseite quer, Eckfaecher, linke Seite
- * zurueck, und dasselbe am Anfang. Dadurch schliessen Laengs- und Stirnwall
- * ohne Naht aneinander an.
- */
-/**
  * Ein Punkt auf der Bandkante - und die einzige Stelle, an der der
  * Schraeganschnitt der Abkuerzungen steckt.
  *
@@ -723,8 +623,8 @@ export function buildPathMesh(path, cfg, material) {
  * Spalt auf der einen und als Ueberlappung auf der anderen Seite desselben
  * Maules. Siehe `maul` in `buildPaths`.
  *
- * Weil der Versatz linear in `sgn` bleibt, stimmen die Zwischenpunkte des
- * Stirnwalls weiterhin von selbst.
+ * Der Versatz bleibt linear in `sgn`, damit die Stirnkante eine Gerade
+ * zwischen den beiden Ecken bleibt.
  */
 export function bandPunkt(path, k, sgn, half, lift) {
   const p = path.samples[k];
@@ -735,9 +635,7 @@ export function bandPunkt(path, k, sgn, half, lift) {
     else if (k === path.samples.length - 1) d = a.ende.mitte + a.ende.spreiz * sgn;
   }
   // Die Querneigung wirkt linear ueber den Querschnitt - deshalb `half * sgn`
-  // und nicht etwa der Betrag. Das ist auch der Grund, warum die Stirnseite
-  // eines Stichwegs von selbst stimmt: `wallRibs` faechert `sgn` dort stufenlos
-  // von +1 auf -1 durch, und die Kante kippt genau mit.
+  // und nicht etwa der Betrag.
   //
   // Der Anschnitt verschiebt die Ecke LAENGS der Tangente, also muss auch das
   // Laengsgefaelle mit - sonst behaelt eine um einen halben Meter vorgeschobene
@@ -754,197 +652,7 @@ export function bandPunkt(path, k, sgn, half, lift) {
   };
 }
 
-function wallRibs(path, half, lift) {
-  const sm = path.samples;
-  const m = sm.length;
-  const top = (k, sgn) => bandPunkt(path, k, sgn, half, lift);
-
-  if (path.closed) {
-    const strips = [];
-    for (const sgn of [1, -1]) {
-      const list = [];
-      for (let i = 0; i < m; i++) {
-        const k = sgn > 0 ? i : m - 1 - i;
-        list.push({ ...top(k, sgn), ox: sm[k].nx * sgn, oz: sm[k].nz * sgn, seite: true });
-      }
-      strips.push(list);
-    }
-    return strips;
-  }
-
-  const list = [];
-  const FAN = 3;      // Zwischenrippen je Ecke
-  const CAP = 4;      // Rippen quer ueber die Stirnseite
-
-  // Eckfaecher: gleicher Oberkantenpunkt, Aussenrichtung dreht sich um -90 Grad
-  const fan = (k, sgn, ax, az) => {
-    const a0 = Math.atan2(az, ax);
-    const p = top(k, sgn);
-    for (let i = 1; i < FAN; i++) {
-      const a = a0 - (Math.PI / 2) * (i / FAN);
-      list.push({ ...p, ox: Math.cos(a), oz: Math.sin(a), seite: false });
-    }
-  };
-  // Stirnseite: Oberkante quer ueber das Band, Aussenrichtung ist die Tangente
-  const cap = (k, from, dir) => {
-    for (let i = 0; i <= CAP; i++) {
-      const sgn = from * (1 - (2 * i) / CAP);
-      list.push({ ...top(k, sgn), ox: sm[k].tx * dir, oz: sm[k].tz * dir, seite: false });
-    }
-  };
-
-  for (let k = 0; k < m; k++) list.push({ ...top(k, 1), ox: sm[k].nx, oz: sm[k].nz, seite: true });
-  fan(m - 1, 1, sm[m - 1].nx, sm[m - 1].nz);
-  cap(m - 1, 1, 1);
-  fan(m - 1, -1, sm[m - 1].tx, sm[m - 1].tz);
-  for (let k = m - 1; k >= 0; k--) list.push({ ...top(k, -1), ox: -sm[k].nx, oz: -sm[k].nz, seite: true });
-  fan(0, -1, -sm[0].nx, -sm[0].nz);
-  cap(0, -1, -1);
-  fan(0, 1, -sm[0].tx, -sm[0].tz);
-  return [list];
-}
-
-/**
- * Ausgleichswall rings um das Wegband.
- *
- * Die Planie setzt die Hoehe des naechstliegenden Weges an. Wo zwei Wege sich
- * kreuzen oder dicht beieinander laufen, gewinnt mal der eine, mal der andere -
- * das Band des hoeheren schwebt dann ueber dem Boden und man schaut darunter.
- * Der Wall ist eine 45-Grad-Boeschung von der Bandkante nach aussen bis unter
- * das Gelaende und schliesst diesen Hohlraum. Im Normalfall faellt er als
- * 5-cm-Fase kaum auf.
- *
- * Eigene Vertices je Rippe, damit die Normalen an der Bandkante hart bleiben;
- * das Material ist beidseitig, weil man an Kreuzungen auch von unten hinsieht.
- */
-export function buildPathWalls(path, cfg, hf, pathIndex, material) {
-  const half = path.width / 2;
-  const tile = path.kachel;
-  const lift = pathLift(cfg, path);
-  const tief = cfg.wegWallTiefe;
-
-  const pos = [];
-  const uv = [];
-  const idx = [];
-
-  // Die Boeschung liegt unter 45 Grad: der waagerechte Versatz nach aussen ist
-  // genau so gross wie der Hoehenabfall, beides ist das eine Mass `o`. Wie weit
-  // es geht, haengt vom Gelaende am Fusspunkt ab, das aber erst mit `o`
-  // feststeht - also schrittweise vergroessern, bis der Fusspunkt unter Grund
-  // liegt. Nur wachsend, damit es nicht schwingt.
-  //
-  // ABER DER WAAGERECHTE VERSATZ IST GEDECKELT, und zwar auf die Breite der
-  // Boeschung neben dem Weg. Faellt das Gelaende steiler ab als 45 Grad - im
-  // Spielgarten sind das 1,4 % der Flaeche, mit Spitzen bis 48 Grad -, dann
-  // laeuft die 45-Grad-Schuerze dem Boden hinterher, ohne ihn je einzuholen:
-  // sie wird beliebig lang und legt sich dabei metertief in die Wiese, quer
-  // ueber alles, was daneben liegt. Genau das sind die Waelle, die in die Wege
-  // schneiden.
-  //
-  // Jenseits des Deckels geht es deshalb SENKRECHT nach unten. Das ist auch
-  // das richtige Bild: ein Weg, der in einen Steilhang geschnitten ist, hat
-  // talseitig eine Stuetzmauer und keine ausufernde Schuerze. Im Normalfall -
-  // fuenf Zentimeter Absatz auf flachem Grund - aendert sich nichts, denn dort
-  // kommt der Deckel nie zum Tragen.
-  const maxAus = Math.max(0.05, cfg.wegBoeschung);
-  const aus = (o) => (o < maxAus ? o : maxAus);
-  const fussMass = (r, start) => {
-    let o = start;
-    for (let i = 0; i < 6; i++) {
-      const a = aus(o);
-      const need = r.y - hf.heightAt(r.x + r.ox * a, r.z + r.oz * a) + tief;
-      if (need <= o) break;
-      o = need;
-    }
-    return o;
-  };
-  const fussPunkt = (r, o) => ({ x: r.x + r.ox * aus(o), y: r.y - o, z: r.z + r.oz * aus(o) });
-
-  for (const strip of wallRibs(path, half, lift)) {
-    const base = pos.length / 3;
-    const n = strip.length;
-    const o = strip.map((r) => fussMass(r, 0));
-
-    // Senkt das Gelaende zwischen zwei Rippen ab, bliebe unter der geraden
-    // Fusslinie ein Schlitz - besonders an den Eckfaechern, wo die Fusspunkte
-    // weit auseinanderliegen. Deshalb die Strecke abtasten und beide Enden
-    // entsprechend weiter hinausziehen. Weiter statt tiefer: so bleiben es
-    // 45 Grad.
-    for (let pass = 0; pass < 3; pass++) {
-      for (let k = 0; k < n; k++) {
-        const k2 = (k + 1) % n;
-        const a = fussPunkt(strip[k], o[k]), b = fussPunkt(strip[k2], o[k2]);
-        // Abtastung nach Laenge, nicht nach fester Anzahl: an einer Kreuzung
-        // faellt das Gelaende auf wenigen Zentimetern in die Boeschung des
-        // anderen Weges ab, und genau dort sass sonst der Schlitz.
-        const steps = Math.min(12, Math.max(2, Math.ceil(Math.hypot(b.x - a.x, b.z - a.z) / 0.08)));
-        // Der GROESSTE Fehlbetrag laengs der Strecke, einmal angewandt - nicht
-        // jeder einzelne aufaddiert. Wer in derselben Runde zwoelf Abtastwerte
-        // nacheinander draufrechnet, ohne die Fusslinie dazwischen neu zu
-        // ziehen, zaehlt denselben Schlitz zwoelfmal; ueber drei Durchlaeufe
-        // und die gemeinsame Rippe `o[k2]` schaukelt sich das um den ganzen
-        // Streifen herum auf. So entstanden Schuerzen von mehreren Metern auf
-        // Gelaende von nicht einmal 30 Grad.
-        let fehlt = 0;
-        for (let i = 1; i < steps; i++) {
-          const f = i / steps;
-          const x = a.x + (b.x - a.x) * f, z = a.z + (b.z - a.z) * f;
-          const need = a.y + (b.y - a.y) * f - (hf.heightAt(x, z) - tief);
-          if (need > fehlt) fehlt = need;
-        }
-        if (fehlt > 0) { o[k] += fehlt; o[k2] += fehlt; }
-      }
-    }
-    for (let k = 0; k < n; k++) o[k] = fussMass(strip[k], o[k]);
-
-    // Ein Streifen ist immer geschlossen - beim Rundweg von selbst, beim
-    // Stichweg, weil er um das ganze Band herumlaeuft. Die letzte Rippe wird
-    // deshalb noch einmal ausgegeben, mit fortgezaehlter Bogenlaenge: sonst
-    // spannte das Schlussviereck die ganze Kachelung auf eine Rippenbreite
-    // zusammen und wurde einfarbig grau (siehe `buildPathMesh`).
-    let s = 0;
-    for (let k = 0; k <= n; k++) {
-      const kk = k % n;
-      const r = strip[kk];
-      const b = fussPunkt(r, o[kk]);
-      if (k > 0) {
-        const q = strip[(k - 1) % n];
-        s += Math.hypot(r.x - q.x, r.z - q.z);
-      }
-      pos.push(r.x, r.y, r.z, b.x, b.y, b.z);
-      // Laenge der Schuerze in ihrer eigenen Ebene - bei gedeckeltem Versatz
-      // nicht mehr o * Wurzel(2), sondern die Hypotenuse aus Versatz und Abfall.
-      const schraeg = Math.hypot(aus(o[kk]), o[kk]);
-      uv.push(s / tile, 0, s / tile, -schraeg / tile);
-    }
-
-    // An Kreuzungen liegt die Wegkante auf der Flaeche eines anderen Weges;
-    // dort wuerde der Wall quer durch den kreuzenden Weg laufen.
-    const gap = strip.map((r) => WALL_AN_KREUZUNGEN_UNTERBRECHEN && r.seite
-      && pathIndex.onSurface(r.x, r.z, path.index));
-
-    for (let k = 0; k < n; k++) {
-      if (gap[k] || gap[(k + 1) % n]) continue;
-      const t1 = base + k * 2, u1 = base + k * 2 + 1;
-      const t2 = base + (k + 1) * 2, u2 = base + (k + 1) * 2 + 1;
-      idx.push(t1, u1, t2, u1, u2, t2);
-    }
-  }
-  if (idx.length === 0) return null;
-
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
-  geo.setIndex(idx);
-  geo.computeVertexNormals();
-  geo.computeBoundingSphere();
-
-  const mesh = new THREE.Mesh(geo, material);
-  mesh.name = `wegwall_${path.index}`;
-  return mesh;
-}
-
-export const pathLift = (cfg, path) => cfg.wegHoehe + (path.liftIndex || 0) * 0.004;
+export const pathLift = (cfg, path) => cfg.wegHoehe + 0.004 * (1 + (path.liftIndex || 0));
 
 /** Punkt und Querrichtung an einer Bogenlaenge. */
 export function atArcLength(path, s) {
@@ -1132,7 +840,7 @@ export function makePathIndex(paths, cfg, cell = 1.5) {
 
     /**
      * Abstand zur befestigten Flaeche UND deren Hoehe an dieser Stelle.
-     * Grundlage der Wegplanie (terrain.js: withPathCorridor).
+     * Grundlage der Wegfindung und der Objektabstaende.
      *
      * Die Hoehe ist die der WEGFLAECHE am Abfragepunkt, nicht die der
      * Mittellinie: Mittellinienhoehe plus Querneigung mal seitlichem Versatz.
@@ -1200,9 +908,20 @@ export function makePathIndex(paths, cfg, cell = 1.5) {
       //
       // Der Fusspunkt auf der Sehne ist t = u + q·sigma·(1 - 2u); nach der
       // wahren Bogenstelle u aufgeloest ergibt das die Zeile unten.
-      const beta = q * arr[n + 11];
-      let u = (t - beta) / (1 - 2 * beta);
-      if (!(u >= 0)) u = 0; else if (u > 1) u = 1;
+      //
+      // NUR IM SEGMENTINNEREN. Wurde der Fusspunkt auf einen Segmentendpunkt
+      // geklemmt, ist die naechste Stelle des Weges nicht die Sehne, sondern
+      // die STUETZSTELLE selbst - und deren Hoehe gilt dann unverfaelscht.
+      // Genau dort steht auch der Bandpunkt: er ist ja der seitliche Versatz
+      // eben dieser Stuetzstelle. Die Korrektur trotzdem anzuwenden schob ihn
+      // ein Stueck die Nachbarsehne hinauf, und bei knapp 100 % Laengsgefaelle
+      // waren das 8 cm zu hoch - die Wiese stand dann so weit ueber dem Belag.
+      let u = t;
+      if (t > 1e-9 && t < 1 - 1e-9) {
+        const beta = q * arr[n + 11];
+        u = (t - beta) / (1 - 2 * beta);
+        if (!(u >= 0)) u = 0; else if (u > 1) u = 1;
+      }
 
       let h = arr[n + 5] + (arr[n + 6] - arr[n + 5]) * u;
       const roll = arr[n + 8] + (arr[n + 9] - arr[n + 8]) * u;
