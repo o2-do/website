@@ -863,6 +863,141 @@ export function hoehen(P, base) {
   return y;
 }
 
+/* ---------------- Schritt 4b: die Boeschung ---------------- */
+
+/**
+ * DIE WIESE DARF NEBEN DEM WEG NICHT ABSTUERZEN.
+ *
+ * Ein Weg liegt quer waagerecht, das Gelaende nicht. Am Hang steht seine
+ * untere Kante deshalb ueber dem Boden - bei anderthalb Metern Breite und 30 %
+ * Gefaelle gut zwanzig Zentimeter. Der naechste Wiesenpunkt liegt einen halben
+ * Meter daneben auf Gelaendehoehe, und dazwischen faellt die Wiese mit
+ * fuenfunddreissig Grad ab. Frueher stand dort ein AUSGLEICHSWALL, ein eigenes
+ * Stueck Geometrie; er ist mit dem gemeinsamen Punktnetz entfallen, und damit
+ * kam der Absatz zurueck.
+ *
+ * Jetzt braucht es dafuer keine Geometrie mehr, nur eine Verschiebung: die
+ * Wiesenpunkte in der Naehe werden um denselben Betrag angehoben, um den die
+ * Wegkante ueber dem Gelaende steht, und dieser Betrag laeuft ueber
+ * `cfg.wegBoeschung` Meter auf null aus. An der Kante schliesst die Wiese damit
+ * genau an den Weg an, ein paar Meter weiter liegt sie wieder auf dem Gelaende,
+ * und dazwischen ist der Uebergang glatt.
+ *
+ * NUR NACH OBEN. An der bergseitigen Kante schneidet der Weg in den Hang; dort
+ * ist der Aufwuchs negativ, und dort soll die Boeschung stehenbleiben, wie sie
+ * ist - ein Weg am Hang hat auf einer Seite eine Stuetzmauer und auf der
+ * anderen einen Anschnitt, das ist keine Stoerung, sondern die Sache selbst.
+ *
+ * Angefasst werden ausschliesslich RASTERPUNKTE. Die Randpunkte gehoeren den
+ * Wegen und haengen an ihren Referenzpunkten; wer sie mitverschoebe, machte
+ * genau den Querschnitt kaputt, um den es die ganze Zeit geht.
+ *
+ * Am Wiesenrand passiert von selbst nichts: der Falloff des Hoehenfeldes
+ * laeuft dort waagerecht aus, ein Weg liegt also eben auf, und sein Aufwuchs
+ * ist null.
+ */
+export function boeschung(P, wege, cfg, base) {
+  const B = Math.max(0, cfg.wegBoeschung || 0);
+  if (B <= 0) return 0;
+
+  // GEMESSEN WIRD GEGEN DIE RANDKANTE, NICHT GEGEN DIE RANDPUNKTE.
+  //
+  // Hier stand einmal ein gewichtetes Mittel ueber alle Randpunkte in
+  // Reichweite. Das sah plausibel aus und war falsch: bei sechs Metern
+  // Reichweite liegt in einem Garten voller Wege fast jeder Wiesenpunkt in
+  // Reichweite von IRGENDEINEM Weg, und weil das Mittel normiert ist, bekam
+  // auch der Punkt mitten auf der Wiese noch acht Zentimeter ab. Die ganze
+  // Wiese hob sich gleichmaessig - und eine gleichmaessige Anhebung sieht man
+  // nicht. Der Regler schien wirkungslos, obwohl er kraeftig wirkte.
+  //
+  // Also die Strecken statt der Punkte: gesucht wird die naechste Stelle auf
+  // der naechsten Randkante, und nur ihr Aufwuchs zaehlt. Was weiter weg liegt
+  // als `B`, bleibt liegen - auch wenn dahinter noch ein Weg kommt.
+  // DER WIESENRAND BLEIBT LIEGEN.
+  //
+  // Auf ihm sitzt die Naht zur Horizontscheibe, und die liegt auf exakt null.
+  // Ein Weg, der bis dorthin hinauslaeuft, hat im Auslaufring durchaus einen
+  // Aufwuchs - das Gelaende schmilzt dort zum Rand hin ab -, und ohne diesen
+  // Saum hob die Boeschung die Randpunkte mit: gemessen bis zu 45 cm, ein
+  // klaffender Absatz rings um den Garten. Innerhalb von `B` Metern vor dem
+  // Rand laeuft die Anhebung deshalb auf null aus.
+  const RG = cfg.durchmesser / 2;
+  const saum = (x, z) => {
+    const t = (Math.hypot(x, z) - (RG - B)) / B;
+    if (t <= 0) return 1;
+    if (t >= 1) return 0;
+    return 1 - t * t * (3 - 2 * t);
+  };
+
+  const zelle = Math.max(B, 2);
+  const eimer = new Map();
+  const K = (i, j) => i * 100000 + j;
+  const zu = (v) => Math.floor(v / zelle);
+  const strecke = (a, b) => {
+    if (P.aus[a] || P.aus[b]) return;
+    const ax = P.x[a], az = P.z[a], bx = P.x[b], bz = P.z[b];
+    const ha = P.y[a] - base.heightAt(ax, az);
+    const hb = P.y[b] - base.heightAt(bx, bz);
+    // In jede Zelle eintragen, die das um `B` aufgeblasene Rechteck beruehrt -
+    // dann findet die Abfrage mit einem einzigen Zellengriff alles, was in
+    // Reichweite liegt.
+    const i0 = zu(Math.min(ax, bx) - B), i1 = zu(Math.max(ax, bx) + B);
+    const j0 = zu(Math.min(az, bz) - B), j1 = zu(Math.max(az, bz) + B);
+    for (let i = i0; i <= i1; i++) {
+      for (let j = j0; j <= j1; j++) {
+        const k = K(i, j);
+        let arr = eimer.get(k);
+        if (!arr) { arr = []; eimer.set(k, arr); }
+        arr.push(ax, az, ha, bx, bz, hb);
+      }
+    }
+  };
+  for (const w of wege) {
+    for (const name of ['links', 'rechts']) {
+      const L = w[name];
+      const n = w.p.closed ? L.length : L.length - 1;
+      for (let k = 0; k < n; k++) strecke(L[k], L[(k + 1) % L.length]);
+    }
+    // Die Stirnseiten schliessen den Umriss eines offenen Weges; ohne sie
+    // bliebe vor einem Wegende ein Zwickel ohne Boeschung.
+    if (!w.p.closed && w.links.length && w.rechts.length) {
+      strecke(w.links[0], w.rechts[0]);
+      strecke(w.links[w.links.length - 1], w.rechts[w.rechts.length - 1]);
+    }
+  }
+
+  let n = 0;
+  for (let id = 0; id < P.x.length; id++) {
+    if (P.art[id] !== RASTER || P.aus[id]) continue;
+    const x = P.x[id], z = P.z[id];
+    const arr = eimer.get(K(zu(x), zu(z)));
+    if (!arr) continue;
+    let best = B * B, hub = 0;
+    for (let k = 0; k < arr.length; k += 6) {
+      const ax = arr[k], az = arr[k + 1], bx = arr[k + 3], bz = arr[k + 4];
+      const vx = bx - ax, vz = bz - az;
+      const l2 = vx * vx + vz * vz;
+      let t = l2 > 0 ? ((x - ax) * vx + (z - az) * vz) / l2 : 0;
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      const dx = x - ax - t * vx, dz = z - az - t * vz;
+      const d2 = dx * dx + dz * dz;
+      if (d2 >= best) continue;
+      best = d2;
+      hub = arr[k + 2] + (arr[k + 5] - arr[k + 2]) * t;
+    }
+    if (hub <= 0) continue;
+    // Auslauf ueber die Boeschungsbreite. An beiden Enden mit waagerechter
+    // Tangente: an der Wegkante, damit die Wiese dort so flach anschliesst wie
+    // der Weg liegt, und am Ende, damit dort kein neuer Knick entsteht.
+    const s = saum(x, z);
+    if (s <= 0) continue;
+    const t = Math.sqrt(best) / B;
+    P.y[id] += hub * (1 - t * t * (3 - 2 * t)) * s;
+    n++;
+  }
+  return n;
+}
+
 /* ---------------- Schritt 5: Netze ---------------- */
 
 /**
@@ -963,6 +1098,11 @@ export function baueGartennetz(paths, cfg, base, rng) {
 
   const { wiese, baender } = sortiereDreiecke(P, tri, paths, cfg);
   hoehen(P, base);
+  // ERST JETZT, nach dem Hoehenausgleich der Wege - vorher gibt es den
+  // Aufwuchs der Wegkanten ueber dem Gelaende noch gar nicht, an dem sich die
+  // Boeschung ausrichtet. Dass die Triangulierung schon gelaufen ist, stoert
+  // nicht: sie ist reine Ebene, und hier wird nur senkrecht verschoben.
+  boeschung(P, wege, cfg, base);
   return { P, wege, wiese, baender, seg: rand.seg };
 }
 

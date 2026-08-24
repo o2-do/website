@@ -25,7 +25,26 @@ export function createHeightField(cfg) {
   const s = cfg.staerke;                            // 0..1
   const freq = 0.008 + 0.042 * s;                   // 1/m, grosse Wellen -> feine Wellen
   const octaves = Math.round(2 + 2 * s);
-  const fbm = makeFbm2D(makeNoise2D(rng), octaves);
+
+  // DIE GLAETTUNG, IM FREQUENZBILD.
+  //
+  // Gemeint ist ein Gaussfilter mit dem Radius `cfg.gelaendeGlaettung`: alles,
+  // was feiner ist, verschwindet, alles Groebere bleibt. Auf einem Hoehenfeld
+  // hiesse das, an jeder Stelle ein Dutzend Nachbarn abzutasten und zu mitteln
+  // - und `heightAt` wird beim Aufbau hunderttausendfach gefragt.
+  //
+  // Es geht ohne. Das Gelaende IST eine Summe von Wellen bekannter Frequenz,
+  // und ein Gaussfilter multipliziert eine Welle der Frequenz f schlicht mit
+  // exp(-(2*pi*f*sigma)^2/2). Also bekommt jede Oktave einmalig ihren Faktor,
+  // und die Abtastung bleibt so teuer wie vorher.
+  const sigma = Math.max(0, cfg.gelaendeGlaettung || 0);
+  const gewichte = [];
+  for (let o = 0; o < octaves; o++) {
+    const f = freq * Math.pow(2, o);
+    const k = 2 * Math.PI * f * sigma;
+    gewichte.push(Math.exp(-0.5 * k * k));
+  }
+  const fbm = makeFbm2D(makeNoise2D(rng), octaves, 2.0, 0.5, gewichte);
   const ox = rng() * 1000, oz = rng() * 1000;
   const edge = cfg.randAuslauf;                     // 0..1, Anteil von R fuer den Auslauf
 
@@ -50,18 +69,43 @@ export function createHeightField(cfg) {
       if (v > hi) hi = v;
     }
   }
-  // Zwei Faktoren statt eines: die Haelfte des Rauschens ueber der Mitte wird
-  // auf `hoch` gestreckt, die darunter auf `tief`. Bei gleichen Werten kommt
-  // dasselbe heraus wie mit einer Spanne, nur eben getrennt einstellbar.
-  const mid = (hi + lo) / 2;
-  const kHoch = hoch / Math.max(1e-6, hi - mid);
-  const kTief = tief / Math.max(1e-6, mid - lo);
+  // DER GANZE RAUSCHBEREICH WIRD GEBRAUCHT.
+  //
+  // Hier standen zwei Faktoren und ein Vorzeichenvergleich: was ueber der Mitte
+  // des Rauschens lag, wurde auf `hoch` gestreckt, was darunter lag, auf
+  // `tief`. Das hatte zwei Folgen, und beide waren schlecht.
+  //
+  // Die erste war eine KANTE quer ueber die ganze Wiese, entlang der Null-Linie:
+  // dort sprang die Steigung im Verhaeltnis der beiden Werte, bei 9 m ueber und
+  // 1 m unter Null von 13 cm je Meter auf 118. Gemessen lagen alle zweihundert
+  // schaerfsten Knicke des Gelaendes innerhalb von 20 cm um die Null. Solange
+  // beide Regler gleich standen, hoben die Faktoren sich auf und man sah nichts.
+  //
+  // Die zweite war eine LEERE. Wer `maxTiefe` klein stellte, bekam nicht etwa
+  // flachere Mulden, sondern gar keine: die untere Haelfte des Rauschens - und
+  // das ist die halbe Wiese - wurde auf eine Ebene zusammengedrueckt. Uebrig
+  // blieb gaehnende Weite und darin ein Berg. Die Form war ja da, sie wurde
+  // nur weggeschnitten.
+  //
+  // Beides erledigt eine einzige Gerade. Der tiefste Rauschwert kommt auf
+  // -tief, der hoechste auf +hoch, alles dazwischen liegt dazwischen. Nichts
+  // wird gestaucht, nichts abgeschnitten, und einen Knick kann es nicht geben,
+  // weil es nur noch eine Abbildung gibt statt zweier. Die Null verschiebt sich
+  // dabei: sie liegt nicht mehr in der Mitte des Rauschens, sondern dort, wo
+  // das Verhaeltnis der beiden Regler sie hinlegt. Bei `maxTiefe` = 0 heisst
+  // das: die Wiese steigt vom tiefsten Punkt an durchgehend an, statt auf
+  // halber Flaeche eben zu liegen.
+  //
+  // Stehen beide Regler gleich, kommt Punkt fuer Punkt dasselbe heraus wie
+  // frueher - die Gerade geht dann genau durch die Mitte.
+  const spanne = Math.max(1e-6, hi - lo);
+  const hub = hoch + tief;
 
   function heightAt(x, z) {
     const f = falloff(x, z);
     if (f <= 0) return 0;
-    const v = fbm(x * freq + ox, z * freq + oz) - mid;
-    return v * (v >= 0 ? kHoch : kTief) * f;
+    const u = (fbm(x * freq + ox, z * freq + oz) - lo) / spanne;
+    return (u * hub - tief) * f;
   }
 
   // Finite Differenzen; wird spaeter fuer Ausrichtung von Objekten gebraucht.

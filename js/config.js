@@ -18,6 +18,11 @@ export const SCHEMA = [
   { group: 'Wiese', key: 'maxTiefe', label: 'Max. Verformung unter Null', unit: 'cm', type: 'range', min: 0, max: 1200, step: 5, default: 30 },
   { group: 'Wiese', key: 'staerke', label: 'Staerke der Verformung', unit: 'wenig – viel', type: 'range', min: 0, max: 1, step: 0.05, default: 0.5 },
   { group: 'Wiese', key: 'randAuslauf', label: 'Randauslauf', unit: '× Radius', type: 'range', min: 0.05, max: 0.6, step: 0.05, default: 0.2 },
+  // Wie weit das Gelaende geglaettet wird, als Radius eines Gaussfilters.
+  // Wirkt nicht auf das fertige Netz, sondern auf die Wellen, aus denen es
+  // entsteht (siehe `terrain.js`) - und kostet deshalb nichts. Gross heisst:
+  // nur noch die weiten Formen bleiben, jede feine Falte verschwindet.
+  { group: 'Wiese', key: 'gelaendeGlaettung', label: 'Gelaende glaetten', unit: 'm (0 = aus)', type: 'range', min: 0, max: 8, step: 0.25, default: 2 },
   { group: 'Wiese', key: 'gitter', label: 'Gitterweite', unit: 'm', type: 'range', min: 0.25, max: 2, step: 0.05, default: 0.5 },
   { group: 'Wiese', key: 'kachelWiese', label: 'Texturkachel Wiese', unit: 'm', type: 'range', min: 0.5, max: 10, step: 0.25, default: 2 },
 
@@ -43,7 +48,19 @@ export const SCHEMA = [
   // immer mehr. Dieser Wert sagt, wie viele Meter vor der Muendung das beginnt.
   // 0 schaltet den Anlauf ab und laesst den Knick stehen.
   { group: 'Wege', key: 'wegAnlauf', label: 'Anlauf vor der Einmuendung', unit: 'm (0 = ohne)', type: 'range', min: 0, max: 12, step: 0.5, default: 4 },
-  { group: 'Wege', key: 'wegBoeschung', label: 'Boeschung neben dem Weg', unit: 'm', type: 'range', min: 0.1, max: 6, step: 0.1, default: 1.5 },
+  // DIE BOESCHUNG NEBEN DEM WEG.
+  //
+  // Ein Weg liegt quer waagerecht, das Gelaende nicht. Am Hang steht seine
+  // untere Kante deshalb ueber dem Boden - bei anderthalb Metern Breite und
+  // 30 % Gefaelle gut zwanzig Zentimeter. Die Wiese daneben liegt auf
+  // Gelaendehoehe, und dazwischen faellt sie auf einem halben Meter ab: eine
+  // Stufe von 35 Grad.
+  //
+  // Dieser Wert sagt, ueber wie viele Meter dieser Absatz auslaeuft. Die
+  // Wiesenpunkte werden dafuer nur ANGEHOBEN, nie gesenkt: an der oberen
+  // Wegkante schneidet der Weg in den Hang, und dort soll die Boeschung
+  // stehenbleiben, wie sie ist.
+  { group: 'Wege', key: 'wegBoeschung', label: 'Boeschung neben dem Weg', unit: 'm (0 = aus)', type: 'range', min: 0, max: 6, step: 0.1, default: 1.5 },
   { group: 'Wege', key: 'kachelWeg', label: 'Texturkachel Weg', unit: 'm', type: 'range', min: 0.3, max: 4, step: 0.1, default: 1.5 },
   { group: 'Wege', key: 'kachelAbk', label: 'Texturkachel Abkuerzung', unit: 'm', type: 'range', min: 0.3, max: 4, step: 0.1, default: 1.0 },
 

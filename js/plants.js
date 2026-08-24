@@ -215,17 +215,31 @@ export function planBeds(beete, paths, pathIndex, hf, occ, cfg) {
     // strenger, aber ein Beet ist keine Wasserwaage.
     if (hf.neigung(cx, cz) > cfg.maxNeigung) continue;
 
-    // Alle vier Ecken muessen im Garten liegen und duerfen keinen Weg beruehren
+    // DAS GANZE RECHTECK muss im Garten liegen und weg vom Weg bleiben, nicht
+    // nur seine vier Ecken.
+    //
+    // Vier Ecken zu pruefen reicht genau so lange, wie kein Weg zwischen ihnen
+    // hindurchlaeuft - und das tut er, sobald ein Beet in den Winkel zwischen
+    // Rundweg und Abkuerzung faellt: alle vier Ecken liegen frei, der Trampel-
+    // pfad quert das Beet in der Mitte, und der Beetboden liegt hinterher ueber
+    // dem Pflaster.
+    //
+    // Abgetastet wird im Raster des Beetbodens (`BEET_SCHRITT`) - also genau in
+    // den Punkten, aus denen die Flaeche spaeter gebaut wird. Was hier frei
+    // ist, liegt auch dort frei.
     let frei = true;
-    for (const sl of [-1, 1]) {
-      for (const st of [-1, 1]) {
+    const nl = Math.max(1, Math.ceil((halbL * 2) / BEET_SCHRITT));
+    const nt = Math.max(1, Math.ceil((halbT * 2) / BEET_SCHRITT));
+    for (let i = 0; i <= nl && frei; i++) {
+      const sl = (i / nl) * 2 - 1;
+      for (let j = 0; j <= nt; j++) {
+        const st = (j / nt) * 2 - 1;
         const ex = cx + tx * halbL * sl + nx * halbT * st;
         const ez = cz + tz * halbL * sl + nz * halbT * st;
         if (Math.hypot(ex, ez) > 0.95 * R || pathIndex.surfaceDistance(ex, ez) < 0.1) {
           frei = false; break;
         }
       }
-      if (!frei) break;
     }
     // Belegung: das Rechteck als Kapsel entlang der langen Achse pruefen
     if (frei && occ) {

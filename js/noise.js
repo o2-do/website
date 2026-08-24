@@ -56,16 +56,28 @@ export function makeNoise3D(rng) {
   };
 }
 
-// Fraktale Summe. Normiert auf die Amplitudensumme, Ergebnis bleibt in [-1,1].
-export function makeFbm2D(noise2D, octaves, lacunarity = 2.0, gain = 0.5) {
+/**
+ * Fraktale Summe. Normiert auf die Amplitudensumme, Ergebnis bleibt in [-1,1].
+ *
+ * `gewichte` daempft einzelne Oktaven - das ist die GLAETTUNG, und sie kostet
+ * nichts. Eine Flaeche mit einem Gaussfilter zu verwischen heisst im
+ * Frequenzbild: jede Welle mit exp(-(2*pi*f*sigma)^2/2) multiplizieren. Eine
+ * fraktale Summe besteht aber schon aus Wellen bekannter Frequenz, und statt
+ * das Ergebnis an vielen Stellen abzutasten und zu mitteln, wird hier einfach
+ * jeder Summand einmal mit seinem Faktor versehen.
+ *
+ * Ohne `gewichte` verhaelt sich alles wie zuvor.
+ */
+export function makeFbm2D(noise2D, octaves, lacunarity = 2.0, gain = 0.5, gewichte = null) {
   return function fbm(x, y) {
     let amp = 1, freq = 1, sum = 0, norm = 0;
     for (let o = 0; o < octaves; o++) {
-      sum += amp * noise2D(x * freq, y * freq);
-      norm += amp;
+      const g = gewichte ? gewichte[o] : 1;
+      sum += amp * g * noise2D(x * freq, y * freq);
+      norm += amp * g;
       amp *= gain;
       freq *= lacunarity;
     }
-    return sum / norm;
+    return norm > 1e-9 ? sum / norm : 0;
   };
 }
