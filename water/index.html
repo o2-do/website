@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <title>Three.js Wasserbeispiel - Tümpel mit Wiese & Tannen</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #ffffff;
+            font-family: Arial, sans-serif;
+        }
+        #info {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: #333;
+            background: rgba(255, 255, 255, 0.85);
+            padding: 12px 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            pointer-events: none;
+            z-index: 100;
+        }
+        h1 {
+            margin: 0 0 5px 0;
+            font-size: 18px;
+        }
+        p {
+            margin: 0;
+            font-size: 12px;
+            color: #666;
+        }
+    </style>
+    <!-- Import Maps für Three.js Addons -->
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+      }
+    </script>
+</head>
+<body>
+    <div id="info">
+        <h1>Three.js: Tümpel & Landschaft</h1>
+        <p>Drehen: Linksklick + Ziehen | Zoomen: Mausrad</p>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { Water } from 'three/addons/objects/Water.js';
+
+        // 1. Szene, Kamera & Renderer aufsetzen
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0xffffff); // Weißer Himmel
+
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 20, 35);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        document.body.appendChild(renderer.domElement);
+
+        // Kamera-Steuerung
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.maxPolarAngle = Math.PI / 2 - 0.01; // Nicht unter die Erde schauen
+
+        // 2. Beleuchtung (Sonne)
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+        scene.add(ambientLight);
+
+        const sun = new THREE.DirectionalLight(0xffffff, 1.2);
+        sun.position.set(30, 40, 20);
+        sun.castShadow = true;
+        sun.shadow.mapSize.width = 2048;
+        sun.shadow.mapSize.height = 2048;
+        sun.shadow.camera.near = 0.5;
+        sun.shadow.camera.far = 150;
+        const d = 40;
+        sun.shadow.camera.left = -d;
+        sun.shadow.camera.right = d;
+        sun.shadow.camera.top = d;
+        sun.shadow.camera.bottom = -d;
+        scene.add(sun);
+
+        // 3. Grüne Wiese mit Loch für den Tümpel
+        const meadowShape = new THREE.Shape();
+        meadowShape.moveTo(-50, -50);
+        meadowShape.lineTo(50, -50);
+        meadowShape.lineTo(50, 50);
+        meadowShape.lineTo(-50, 50);
+        meadowShape.lineTo(-50, -50);
+
+        const pondRadius = 12;
+        // Runder Ausschnitt (Tümpel) in der Mitte der Wiese
+        /*
+        const holePath = new THREE.Path();
+        holePath.absarc(0, 0, pondRadius, 0, Math.PI * 2, true);
+        meadowShape.holes.push(holePath);
+        */
+
+        const meadowGeometry = new THREE.ShapeGeometry(meadowShape);
+        const meadowMaterial = new THREE.MeshStandardMaterial({ 
+            color: 0x55aa44, 
+            roughness: 0.8,
+            metalness: 0.1
+        });
+        const meadow = new THREE.Mesh(meadowGeometry, meadowMaterial);
+        meadow.rotation.x = -Math.PI / 2;
+        meadow.receiveShadow = true;
+        scene.add(meadow);
+
+
+        // 4. Wasser mit echter Normal Map laden
+        const textureLoader = new THREE.TextureLoader();
+        const waterNormals = textureLoader.load(
+        './waternormals.jpg',
+        function (texture) {
+            texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+        }
+        );
+
+        const waterGeometry = new THREE.CircleGeometry(pondRadius, 64);
+        const water = new Water(waterGeometry, {
+            textureWidth: 512,
+            textureHeight: 512,
+            waterNormals: waterNormals,
+            sunDirection: sun.position.clone().normalize(),
+            sunColor: 0xffffff,
+            waterColor: 0x003344,
+            distortionScale: 1.5, // Niedrigerer Wert = sanftere Wellen
+            size: 2.0,            // Höhere Texturwiederholung für kleinere Krauselwellen
+            fog: false
+        });
+
+        water.rotation.x = -Math.PI / 2;
+        water.position.y = +0.1;
+        scene.add(water);
+
+        // 5. Spitze Pseudotannen erstellen
+        function createTree() {
+            const treeGroup = new THREE.Group();
+
+            // Stamm
+            const trunkGeo = new THREE.CylinderGeometry(0.2, 0.4, 1.5, 8);
+            const trunkMat = new THREE.MeshStandardMaterial({ color: 0x5a3d28, roughness: 0.9 });
+            const trunk = new THREE.Mesh(trunkGeo, trunkMat);
+            trunk.position.y = 0.75;
+            trunk.castShadow = true;
+            treeGroup.add(trunk);
+
+            // Blätter/Kegel (3 übereinander für Tannenoptik)
+            const leavesMat = new THREE.MeshStandardMaterial({ color: 0x1b4d2e, roughness: 0.6 });
+            
+            const layers = [
+                { radius: 1.8, height: 2.5, y: 2.2 },
+                { radius: 1.4, height: 2.2, y: 3.4 },
+                { radius: 0.9, height: 1.8, y: 4.4 }
+            ];
+
+            layers.forEach(layer => {
+                const coneGeo = new THREE.ConeGeometry(layer.radius, layer.height, 8);
+                const cone = new THREE.Mesh(coneGeo, leavesMat);
+                cone.position.y = layer.y;
+                cone.castShadow = true;
+                cone.receiveShadow = true;
+                treeGroup.add(cone);
+            });
+
+            return treeGroup;
+        }
+
+        // Tannen um den Tümpel herum verteilen
+        const numTrees = 35;
+        for (let i = 0; i < numTrees; i++) {
+            const tree = createTree();
+            
+            // Zufälliger Abstand außerhalb des Tümpels (Radius 15 bis 40)
+            const dist = 15 + Math.random() * 25;
+            const angle = Math.random() * Math.PI * 2;
+
+            tree.position.x = Math.cos(angle) * dist;
+            tree.position.z = Math.sin(angle) * dist;
+
+            // Leicht zufällige Skalierung & Drehung
+            const scale = 0.7 + Math.random() * 0.6;
+            tree.scale.set(scale, scale, scale);
+            tree.rotation.y = Math.random() * Math.PI;
+
+            scene.add(tree);
+        }
+
+        // 6. Animation Loop
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // Wasser-Wellen animieren
+            water.material.uniforms['time'].value += 0.1 / 60.0;
+
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        // Window Resize Event
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        animate();
+    </script>
+</body>
+</html>

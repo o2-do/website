@@ -32,13 +32,17 @@ export const SCHEMA = [
   // angelegte Rundweg. Belag und Kachelung hat sie schon fuer sich; die Breite
   // war das Letzte, was noch am Rundweg hing.
   { group: 'Wege', key: 'wegBreiteAbk', label: 'Wegbreite Abkuerzung', unit: 'm', type: 'range', min: 0.3, max: 4, step: 0.1, default: 1.0 },
-  // Wie steil ein Weg sich an einen anderen anhaengen darf (wegknoten.js).
-  // Zwei Dinge auf einmal: wie viel Querneigung er je Wegbreite aufnehmen darf,
-  // und mit welcher Neigung er aus der planierten Stufe des Hauptwegs auf sein
-  // eigenes Gelaendeniveau zurueckkommt. Klein = lange, sanfte Anschluesse;
-  // gross = kurze, harte. Reicht die Weglaenge fuer den Auslauf nicht, wird er
-  // gestaucht - der Anschluss selbst bleibt in jedem Fall exakt.
-  { group: 'Wege', key: 'wegAnschluss', label: 'Anschluss-Zusatzneigung', unit: 'Grad je Wegbreite', type: 'range', min: 2, max: 45, step: 1, default: 10 },
+  // WIE LANG DER ANLAUF VOR EINER EINMUENDUNG IST.
+  //
+  // Quer waagerecht zu liegen ist das Prinzip jedes Weges - der Rundweg bleibt
+  // ihm ausnahmslos treu. Eine Abkuerzung kann es an ihrer Muendung nicht: dort
+  // erbt ihre Stirnseite die Querneigung des Rundwegs, und zwei Meter davor
+  // laege sie wieder waagerecht. Genau das war der Knick.
+  //
+  // Deshalb gibt sie ihre waagerechte Lage schon vorher auf - erst kaum, dann
+  // immer mehr. Dieser Wert sagt, wie viele Meter vor der Muendung das beginnt.
+  // 0 schaltet den Anlauf ab und laesst den Knick stehen.
+  { group: 'Wege', key: 'wegAnlauf', label: 'Anlauf vor der Einmuendung', unit: 'm (0 = ohne)', type: 'range', min: 0, max: 12, step: 0.5, default: 4 },
   { group: 'Wege', key: 'wegBoeschung', label: 'Boeschung neben dem Weg', unit: 'm', type: 'range', min: 0.1, max: 6, step: 0.1, default: 1.5 },
   { group: 'Wege', key: 'kachelWeg', label: 'Texturkachel Weg', unit: 'm', type: 'range', min: 0.3, max: 4, step: 0.1, default: 1.5 },
   { group: 'Wege', key: 'kachelAbk', label: 'Texturkachel Abkuerzung', unit: 'm', type: 'range', min: 0.3, max: 4, step: 0.1, default: 1.0 },
@@ -203,6 +207,19 @@ export function normalize(cfg) {
   // Gartenquadrats (R·√2) und noch innerhalb der Scheibe.
   const R = c.durchmesser / 2;
   c.waldRadius = Math.min(Math.max(R * c.waldAbstand, R * 1.45), c.horizont * 0.95);
+
+  // DER GARTEN IST EINE SCHEIBE, kein Quadrat.
+  //
+  // Verformt wird das Gelaende ohnehin nur innerhalb des Kreises - der Falloff
+  // drueckt es ab `durchmesser/2` auf null. Alles, was frueher darueber hinaus
+  // im Quadrat lag, war flache Wiese, die genauso gut zur Horizontscheibe
+  // gehoeren kann. Die Wiese endet deshalb auf dem Kreis.
+  //
+  // `randSegmente` ist die Eckenzahl dieses Vielecks - und sie steht hier und
+  // nicht in `wegnetz.js`, weil Wiesenrand, Horizontscheibe und Kartenkasten
+  // DIESELBEN Ecken brauchen. Ein Vieleck mit weniger Ecken liegt innerhalb des
+  // anderen, und an der Kante klaffte ein Spalt.
+  c.randSegmente = Math.max(48, Math.round((Math.PI * c.durchmesser) / c.gitter));
 
   c.wegSample = 0.5;        // Abtastschritt der Mittellinie in m
   // DER WEG LIEGT IN DER WIESE, NICHT DARAUF.

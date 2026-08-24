@@ -15,14 +15,23 @@ export function createBladeGeometry() {
      0.5, 0.0, 0,   0.25, 0.55, 0, -0.25, 0.55, 0,
     -0.25, 0.55, 0, 0.25, 0.55, 0,  0.0, 1.0, 0,
   ]);
+  
   const col = [];
-  const shade = (y) => 0.55 + 0.55 * y;
+  // Angepasst: 0.85 am Halmboden (y=0), 1.0 an der Spitze (y=1)
+  // Das verhindert, dass der Halm unten schwarz/dunkelgrün wirkt.
+  const shade = (y) => 0.85 + 0.15 * y; 
+
   for (let i = 0; i < pos.length; i += 3) {
     const c = shade(pos[i + 1]);
     col.push(c, c, c);
   }
+
   const nrm = new Float32Array(pos.length);
-  for (let i = 0; i < pos.length; i += 3) { nrm[i] = 0; nrm[i + 1] = 1; nrm[i + 2] = 0; }
+  for (let i = 0; i < pos.length; i += 3) { 
+    nrm[i] = 0; 
+    nrm[i + 1] = 1; 
+    nrm[i + 2] = 0; 
+  }
 
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
@@ -242,29 +251,37 @@ export function buildGrassMeshes(buffer, geometry, material, name, cfg, seedName
   const n = buffer.count;
   if (!n) return [];
 
-  // Farbstreuung aus einer kleinen Palette - optisch nicht von einer Farbe je
-  // Halm zu unterscheiden, aber ohne 100 000 HSL-Umrechnungen.
-  //
-  // Gezogen wird ueber ALLE Halme in ihrer urspruenglichen Reihenfolge, nicht
-  // je Sektor: sonst haenge die Farbfolge davon ab, wie das Raster gerade
-  // steht, und das Umstellen der Sektorweite faerbte die Wiese um.
   const rng = stream(cfg._seed, seedName + '-color');
   const PAL = 64;
   const pal = new Float32Array(PAL * 3);
   const c = new THREE.Color();
+
+  // 1. PALETTE (Helle Grüntöne, abgestimmt auf die Wiese)
+  const baseHue = 0.25;
+  const baseSat = 0.42;
+  const baseLight = 0.40; // Etwas höherer Grundwert für Helligkeit
+
   for (let i = 0; i < PAL; i++) {
-    c.setHSL(rand(rng, 0.22, 0.30), rand(rng, 0.35, 0.6), rand(rng, 0.28, 0.45));
-    pal[i * 3] = c.r; pal[i * 3 + 1] = c.g; pal[i * 3 + 2] = c.b;
+    const h = baseHue + rand(rng, -0.05, 0.05); 
+    const s = baseSat + rand(rng, 0.00, 0.20); 
+    const l = baseLight + rand(rng, -0.3, 0.10); // Nur noch leicht hellere Nuancen
+
+    c.setHSL(h, s, l);
+    pal[i * 3]     = c.r;
+    pal[i * 3 + 1] = c.g;
+    pal[i * 3 + 2] = c.b;
   }
+
+  // 2. FARB-INDIZES ZUWEISEN (Wieder exakt wie in deinem Original-Code!)
   const alleFarben = new Float32Array(n * 3);
   for (let i = 0; i < n; i++) {
     const k = (Math.floor(rng() * PAL) % PAL) * 3;
-    alleFarben[i * 3] = pal[k];
+    alleFarben[i * 3]     = pal[k];
     alleFarben[i * 3 + 1] = pal[k + 1];
     alleFarben[i * 3 + 2] = pal[k + 2];
   }
 
-  // Je Halm sein Feld, damit die Farben beim Aufteilen mitwandern.
+  // Sektoren-Zuordnung
   const feld = new Int32Array(n);
   for (let i = 0; i < n; i++) {
     feld[i] = sektoren.index(buffer.array[i * 16 + 12], buffer.array[i * 16 + 14]);
@@ -282,19 +299,18 @@ export function buildGrassMeshes(buffer, geometry, material, name, cfg, seedName
     let j = 0;
     for (let i = 0; i < n; i++) {
       if (feld[i] !== k) continue;
-      farben[j * 3] = alleFarben[i * 3];
+      farben[j * 3]     = alleFarben[i * 3];
       farben[j * 3 + 1] = alleFarben[i * 3 + 1];
       farben[j * 3 + 2] = alleFarben[i * 3 + 2];
       j++;
     }
+
     mesh.instanceColor = new THREE.InstancedBufferAttribute(farben, 3);
     mesh.instanceColor.needsUpdate = true;
 
     mesh.computeBoundingSphere();
-    // Halme werfen bewusst keinen Schatten: 100k Instanzen im Shadow-Pass
-    // kosten die Haelfte der Framerate und ergeben nur Rauschen.
     mesh.castShadow = false;
-    mesh.receiveShadow = true;
+    mesh.receiveShadow = false; // Schatten-Empfang auch deaktivieren
     mesh.name = `${name}_${k}`;
     meshes.push(mesh);
   }

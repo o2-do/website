@@ -4,11 +4,9 @@ import {
   createHeightField, buildHorizon, buildMapMask, buildMapBox,
 } from './terrain.js';
 import { buildPaths, makePathIndex, torWeg } from './paths.js';
-import { verknuepfeWege } from './wegknoten.js';
 import {
-  baueNetz, verforme, ebnePfade, glaette, hoehenfeldAusNetz,
-  baueWiesenMesh, baueWegMesh,
-} from './wiesennetz.js';
+  baueGartennetz, hoehenfeldAusNetz, baueWiese, baueWegband,
+} from './wegnetz.js';
 import { planSigns, buildSigns } from './signs.js';
 import { createOccupancy } from './occupancy.js';
 import {
@@ -69,38 +67,59 @@ export async function buildGarden(cfg, tex, onProgress = () => {}) {
   const imGrund = (m) => bodenkarte.bindeMaterial(m);
 
   const wieseMat = imGrund(new THREE.MeshStandardMaterial({
-    map: tex.wiese, roughness: 1, metalness: 0,
+    map: tex.wiese,
+    roughness: 1,
+    metalness: 0,
     wireframe: cfg.drahtgitter,
   }));
   const felsMat = new THREE.MeshStandardMaterial({
-    map: tex.fels, roughness: 0.95, metalness: 0, flatShading: true,
+    map: tex.fels,
+    roughness: 0.95,
+    metalness: 0,
+    flatShading: true,
     wireframe: cfg.drahtgitter,
   });
   const wegMat = imGrund(new THREE.MeshStandardMaterial({
-    map: tex.weg, roughness: 1, metalness: 0,
+    map: tex.weg,
+    roughness: 1,
+    metalness: 0,
     wireframe: cfg.drahtgitter,
-    polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
   }));
   // Abkuerzungen sind Trampelpfade und haben ihren eigenen Belag.
   const abkMat = imGrund(new THREE.MeshStandardMaterial({
-    map: tex.abk, roughness: 1, metalness: 0,
+    map: tex.abk,
+    roughness: 1,
+    metalness: 0,
     wireframe: cfg.drahtgitter,
-    polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
   }));
   // Maske und Kasten sind reine Kartengrafik: weiss, ohne Licht - und damit
   // auch ohne Schatten, denn ein Basismaterial nimmt keinen an.
   const kastenMat = new THREE.MeshBasicMaterial({
-    color: 0xffffff, side: THREE.DoubleSide, fog: false,
+    color: 0xffffff,
+    side: THREE.DoubleSide,
+    fog: false,
     wireframe: cfg.drahtgitter,
   });
   const pfahlMat = new THREE.MeshStandardMaterial({
-    color: 0x997755, roughness: 1, metalness: 0,
+    color: 0x997755,
+    roughness: 1,
+    metalness: 0,
     wireframe: cfg.drahtgitter,
   });
-  const grasMat = imGrund(new THREE.MeshStandardMaterial({
-    color: 0xffffff, roughness: 1, metalness: 0,
-    side: THREE.DoubleSide, vertexColors: true,
-    wireframe: cfg.drahtgitter,
+  const grasMat = imGrund(new THREE.MeshBasicMaterial({
+    vertexColors: true,
+    side: THREE.DoubleSide
+    /* ,
+    color: 0xffffff,
+    roughness: 1,
+    metalness: 0,
+    wireframe: cfg.drahtgitter, */
   }));
 
   // Die Wege brauchen ein Hoehenfeld, das Hoehenfeld braucht die Wege (fuer die
@@ -123,34 +142,40 @@ export async function buildGarden(cfg, tex, onProgress = () => {}) {
   const zugang = torWeg(cfg, base, paths, tor, paths.length);
   if (zugang) paths.push(zugang);
 
-  // Bis hierher folgt jeder Weg fuer sich dem Rohgelaende. Jetzt werden sie
-  // aneinander angeschlossen: wo einer in den anderen muendet, uebernimmt der
-  // rangniedere dessen Ebene - Hoehe, Laengsgefaelle und Querneigung. Das muss
-  // VOR dem Index passieren, denn der traegt beides in die Planie weiter.
-  verknuepfeWege(paths, base, cfg);
+  // Der Anschluss der Wege aneinander wird NICHT MEHR GERECHNET.
+  //
+  // Hier stand `verknuepfeWege`: es hat die Querneigung an einer Einmuendung
+  // aus dem Gefaellevektor des Hauptwegs projiziert, das Plateau am Tor
+  // konstruiert und beides ueber eine Auslauflaenge eingeblendet. Das ist
+  // hinfaellig, seit die Stirnseite einer Abkuerzung ihre Hoehe von zwei
+  // Querschnitten des Rundwegs erbt (wegnetz.js): dann kippt sie genau in
+  // dessen Ebene, weil sie es geometrisch gar nicht anders kann.
+  //
+  // Der Knick dahinter - der Weg fiel hinter der Naht schlagartig wieder auf
+  // seine eigene waagerechte Lage zurueck - ist ebenfalls erledigt, und zwar
+  // an derselben Stelle: `neigeAnschluesse` laesst die Randpunkte im Anlauf
+  // vor der Muendung auf wandernde Referenzpunkte zeigen (wegnetz.js).
 
   const pathIndex = makePathIndex(paths, cfg);
 
-  // DAS NETZ. Erst in der Ebene: Gitter legen, Wegbaender darauf zeichnen,
-  // Schnittflaechen bestimmen. Danach steht der Punktsatz fest, und die drei
-  // Durchgaenge verschieben die Punkte nur noch senkrecht.
+  // DAS NETZ. Erst ausschliesslich in der Ebene: Wegpunkte sammeln, Kanten
+  // schneiden, Rasterpunkte streuen, triangulieren. Danach steht jeder Punkt
+  // fest, es kommt keiner mehr hinzu - und die Hoehe verschiebt ihn nur noch
+  // senkrecht.
   //
-  // Weil Wiese und Wegband sich an der Kante DIESELBEN Punkte teilen, kann dort
+  // Weil Wiese und Wegband an der Kante DIESELBEN Punkte benutzen, kann dort
   // weder eine Fuge aufgehen noch eines durch das andere stossen. Die ganze
-  // frueher noetige Kette - Weg anheben, Ausgleichswall, Untergriff, Saum -
-  // ist damit hinfaellig.
-  const netz = baueNetz(paths, cfg);
-  verforme(netz.netz, base);
-  ebnePfade(netz.netz, paths, cfg);
-  glaette(netz.netz, netz.wiese, cfg);
+  // frueher noetige Kette - Weg anheben, Ausgleichswall, Ueberstand, Untergriff,
+  // Saum - ist damit hinfaellig.
+  const netz = baueGartennetz(paths, cfg, base, stream(cfg._seed, 'wiese'));
   const alleDreiecke = netz.wiese.concat(...netz.baender);
-  const hf = hoehenfeldAusNetz(netz.netz, alleDreiecke, base, cfg);
+  const hf = hoehenfeldAusNetz(netz.P, alleDreiecke, base, cfg);
 
   paths.forEach((p, i) => {
     // Der Zugang zum Tor ist ein angelegter Weg, keine Abkuerzung - er bekommt
     // denselben Belag wie der Rundweg (siehe `makePath`).
     const wieRund = p.closed || p.art === 'tor';
-    const mesh = baueWegMesh(netz.netz, p, netz.kante[i], cfg, wieRund ? wegMat : abkMat);
+    const mesh = baueWegband(netz.P, netz.baender[i], p, cfg, wieRund ? wegMat : abkMat);
     mesh.receiveShadow = true;
     group.add(mesh);
   });
@@ -175,7 +200,7 @@ export async function buildGarden(cfg, tex, onProgress = () => {}) {
   tPhase = performance.now();
 
   onProgress('Wiese …');
-  const ground = baueWiesenMesh(netz.netz, netz.wiese, cfg, wieseMat);
+  const ground = baueWiese(netz.P, netz.wiese, cfg, wieseMat);
   ground.receiveShadow = true;
   group.add(ground);
   // Die weite Horizontscheibe fuer die Augenperspektive; in der Karte deckt

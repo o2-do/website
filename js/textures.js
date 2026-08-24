@@ -9,7 +9,7 @@ export async function loadTextures(renderer) {
   const files = {
     wiese: 'img/wiese.jpg',
     weg: 'img/kopfstein.jpg',
-    abk: 'img/abk.jpg?v2',         // Belag der Abkuerzungen
+    abk: 'img/abk2.jpg?v3',         // Belag der Abkuerzungen
     fels: 'img/felsstruktur.jpg',
     wald: 'img/wald.png',       // Silhouettenstreifen mit Alphakanal
     pfosten: 'img/pfosten.jpg', // Holz von Zaunpfosten und Querhoelzern

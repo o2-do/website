@@ -78,15 +78,6 @@ const GRAV = 0.60;
 // Größter Versatz der Knorrigkeit, als Vielfaches des Halbmessers an dieser
 // Stelle. Bei 100 weicht ein Stamm also um anderthalb Halbmesser aus.
 const KNORRIG = 1.50;
-// Anteil der Segmentlänge. Das Maß hat zwei Aufgaben, und beide hängen
-// zusammen: an der Zweigspitze ist es das Maß des Versatzes, überall sonst ist
-// es seine Schranke. Weiter als so weicht kein Punkt aus — sonst legt sich ein
-// Strang dort um, wo dickes Holz kurze Segmente hat.
-const KNORRIG_SCHRITT = 0.30;
-// Und die Schranke: so weit darf ein Punkt höchstens ausweichen, gemessen am
-// kürzesten Segment, das an ihm hängt. Sie zieht sich zusätzlich zusammen, wo
-// das Holz dicker ist als der Schritt — dort und nur dort war etwas zu retten.
-const KNORRIG_SCHRANKE = 0.45;
 
 const V = THREE.Vector3;
 const Q = THREE.Quaternion;
@@ -130,9 +121,6 @@ export const STANDARD = {
   aenderungen: {},
   // Von Hand eingefügte Billboards, siehe normZusatz().
   zusatz: [],
-  // Fünf Farbvarianten für das Laub, siehe normLaubfarben(). Alle stehen auf
-  // eins, färben also nicht.
-  laubfarben: [[1,1,1], [1,1,1], [1,1,1], [1,1,1], [1,1,1]],
   huelle: {
     anzahl:          40,     // Punkte auf der Hülle = Ankerpunkte der Billboards
     schalen:          3,     // gerechnete Knotenlagen zwischen Hülle und Zentrum
@@ -143,7 +131,6 @@ export const STANDARD = {
     innenLeer:       true,   // nur die Hüllenpunkte tragen Billboards
     unrundheit:      35,     // 0 = Kugel, 100 = stark gelappt und geklumpt
     streckung:       1.0,    // Höhenmultiplikator ab Stammoberkante, 0.5 … 4
-    blaehung:         0,     // 0 … 50 %, drängt die inneren Attraktoren nach außen
     billboards: {
       unten: 2, mitte: 3, oben: 1,   // Anzahl der Bildvarianten je Lage
       aufloesung: 256,               // Kantenlänge einer Schicht in Bildpunkten
@@ -152,15 +139,13 @@ export const STANDARD = {
   },
   holz: {
     unterteilung:   1,        // zusätzliche Punkte je Segment, 0 … 5
-    stammDicke:   100,        // 100 … 200 %, verstärkt das Holz zum Stamm hin
     stammLaenge:    2.0,      // Meter über Null bis zur Kronenunterseite
     stammSegmente:  6,        // Stufen des Schafts, Auflösung der Knorrigkeit
     staemme:        1,        // durchgehende Stammpfade, 1 … 6
     teilungen:    100,        // Anteil der Teilungen in Prozent, 10 … 100
     schwerkraft:    0,        // −100 (Drall nach oben) … +100 (nach unten)
-    knorrigSchaft:  14,       // 0 … 100, der Hauptstamm für sich
-    knorrigStamm:   14,       // 0 … 100, am Astansatz
-    knorrigHuelle:  45,       // 0 … 100, am Zweigende; dazwischen linear
+    knorrigStamm:   14,       // 0 … 100
+    knorrigHuelle:  45,       // 0 … 100, linear dazwischen verteilt
     farbe:          '#3a2d20',
     textur:         '',       // Pfad oder Datenadresse, leer = keine
     kachel:         2.0       // Wiederholungen je Astumfang
@@ -225,30 +210,6 @@ function normZusatz(src){
   return out;
 }
 
-// Wie viele Farbvarianten ein Baum mitbringt. Die Zahl steht fest: sie ist
-// zugleich der Nenner der Verteilung im Spiel — sechs Möglichkeiten, die fünf
-// Varianten und ungefärbt.
-export const LAUBFARBEN = 5;
-
-// Die Farbvarianten prüfen. Jede ist ein Dreisatz von Multiplikatoren auf das
-// Blattbild, keine Farbe im gewöhnlichen Sinn: 1 lässt den Kanal, wie er ist,
-// darunter dunkelt er, darüber hellt er auf. Deshalb reicht der Bereich über
-// eins hinaus — ein Wald aus einer einzigen Vorlage hätte sonst nie einen
-// Baum, der heller steht als seine Bilder.
-//
-// Es sind immer genau LAUBFARBEN Einträge. Was fehlt, steht auf eins und färbt
-// damit nicht; die Zeile bleibt aber erhalten, denn sie hat im Spiel ihren
-// festen Anteil an der Verteilung.
-function normLaubfarben(src){
-  const out = [];
-  for (let i = 0; i < LAUBFARBEN; i++){
-    const q = (Array.isArray(src) && Array.isArray(src[i])) ? src[i] : null;
-    out.push(q ? [cl(num(q[0], 1), 0, 4), cl(num(q[1], 1), 0, 4), cl(num(q[2], 1), 0, 4)]
-               : [1, 1, 1]);
-  }
-  return out;
-}
-
 export function normiere(src){
   const s = src || {};
   const h = s.huelle || {};
@@ -264,7 +225,6 @@ export function normiere(src){
     seed: Math.round(num(s.seed, STANDARD.seed)),
     aenderungen: normAenderungen(s.aenderungen),
     zusatz:      normZusatz(s.zusatz),
-    laubfarben:  normLaubfarben(s.laubfarben),
     // Das Paket wird nicht geprüft, nur durchgereicht: es enthält Bilddaten
     // und keine Einstellungen, und was darin steht, hat der Export erzeugt.
     paket:       (s.paket && typeof s.paket === 'object') ? s.paket : null,
@@ -278,7 +238,6 @@ export function normiere(src){
       innenLeer:       h.innenLeer === undefined ? true : !!h.innenLeer,
       unrundheit:      cl(num(h.unrundheit, 35), 0, 100),
       streckung:       cl(num(h.streckung, 1), 0.5, 4),
-      blaehung:        cl(num(h.blaehung, 0), 0, 50),
       billboards: {
         unten: Math.round(cl(num(b.unten, 2), 1, 9)),
         mitte: Math.round(cl(num(b.mitte, 3), 1, 9)),
@@ -290,16 +249,11 @@ export function normiere(src){
     },
     holz: {
       unterteilung:  Math.round(cl(num(z.unterteilung, 1), 0, 5)),
-      stammDicke:    cl(num(z.stammDicke, 100), 100, 200),
       stammLaenge:   cl(num(z.stammLaenge, 2), 0.3, 8),
       stammSegmente: Math.round(cl(num(z.stammSegmente, 6), 1, 24)),
       staemme:       Math.round(cl(num(z.staemme, 1), 1, 6)),
       teilungen:     cl(num(z.teilungen, 100), 10, 100),
       schwerkraft:   cl(num(z.schwerkraft, 0), -100, 100),
-      // Der Schaft hatte früher keinen eigenen Regler, sondern lief unter
-      // „Stamm“ mit. Fehlt er in der Datei, erbt er von dort — eine alte Datei
-      // behält damit ihren Stamm, so wie er war.
-      knorrigSchaft: cl(num(z.knorrigSchaft, cl(num(z.knorrigStamm, 14), 0, 100)), 0, 100),
       knorrigStamm:  cl(num(z.knorrigStamm, 14), 0, 100),
       knorrigHuelle: cl(num(z.knorrigHuelle, 45), 0, 100),
       farbe:         /^#[0-9a-f]{6}$/i.test(z.farbe || '') ? z.farbe : STANDARD.holz.farbe,
@@ -506,17 +460,10 @@ const GRUPPE_MAX = 2.20;
 // Die Achse ist eine Kette und kein einzelnes Segment — sonst könnten die Äste
 // nicht auf ihrer jeweils eigenen Höhe ansetzen. Ihre Knoten stehen deshalb
 // genau dort, wo ein Ast ankommt, und werden erst gesetzt, wenn alle
-// Ansatzhöhen feststehen. Zwei Ansätze, die enger beieinander liegen als das,
-// teilen sich einen Knoten.
-//
-// Das Maß ist nicht fest, sondern ein Anteil des Kronenhalbmessers: an einem
-// großen Baum ist auch der Stamm dick, und Ringe im Zentimeterabstand auf
-// zwanzig Zentimeter dickem Holz sind keine Kette mehr, sondern eine
-// Ziehharmonika — jeder Versatz wird dort zum Knick, und gerechnet wird an
-// ihnen ohnehin umsonst. Bei tief gezogenem Zentrum drängen sich viele Ansätze
-// auf wenigen Zentimetern; genau dort fiel es auf.
+// Ansatzhöhen feststehen. Zwei Ansätze, die enger als ACHSE_ENG beieinander
+// liegen, teilen sich einen Knoten; ohne das entstünden Ringe im
+// Millimeterabstand.
 const ACHSE_ENG = 0.01;
-const ACHSE_ENG_R = 0.03;
 // Tiefster erlaubter Punkt des unteren Achsenendes. Ohne diese Schranke kippte
 // der Hauptstamm um, sobald das Ende unter den Boden gezogen wird.
 const ACHSE_MIN = 0.30;
@@ -655,21 +602,11 @@ export function baueSkelett(cfg, huelle){
   // die Schalenzahl zugleich, wie viele Hauptäste am Stamm ankommen. Zu wenige
   // Schalen, und dort laufen zwanzig Segmente in einem Punkt zusammen — ein
   // Speichenrad. Wie viele es geworden sind, steht in den Kennzahlen.
-  // --- Blähung ---------------------------------------------------------------
-  // Als säße im Zentrum etwas Abstoßendes: jede Schale rückt um denselben
-  // Anteil ihres Abstands zur Hülle nach außen. Bei 50 % legt eine Schale den
-  // halben Weg zur Hülle zurück — die innerste also weit, die äußerste kaum,
-  // und die Hülle selbst gar nicht, denn sie ist keine Schale. Das Astwerk wird
-  // dadurch nach außen gedrängt und die Krone innen offener, ohne dass sich am
-  // Umriss oder an einem einzigen Billboard etwas ändert.
-  const blaehung = cl(num(cfg.huelle.blaehung, 0), 0, 50) / 100;
-
   const mitte = new V(), _u = new V();
   const innenKnoten = [];
   let innen = 0, inGruppen = 0;
   for (let j = 1; j <= schalen && front.length; j++){
-    const rSchale = H.R0 * (schalen + 1 - j) / (schalen + 1);
-    const rZiel = rSchale + blaehung * (H.R0 - rSchale);
+    const rZiel = H.R0 * (schalen + 1 - j) / (schalen + 1);
     const naechste = [];
     for (const g of gruppiere(front)){
       mitte.set(0, 0, 0);
@@ -727,10 +664,9 @@ export function baueSkelett(cfg, huelle){
   // feste Stufung täte es nicht: läge der nächste Knoten daneben, säße der
   // Astansatz nicht auf seiner gerechneten Höhe.
   const hoehen = [yUnten, yOben].concat(yAst).sort((a, b) => a - b);
-  const eng = Math.max(ACHSE_ENG, H.R0 * ACHSE_ENG_R);
   const achse = [];
   for (const y of hoehen){
-    if (achse.length && y - nd[achse[achse.length-1]].pos.y < eng) continue;
+    if (achse.length && y - nd[achse[achse.length-1]].pos.y < ACHSE_ENG) continue;
     const k = knoten(0, y, 0, true);
     if (achse.length) verbinde(k, achse[achse.length-1]);
     else { nd[k].stamm = true; verbinde(k, nWurzel); }
@@ -782,21 +718,6 @@ export function baueSkelett(cfg, huelle){
       let sum = 0;
       for (const c of nd[i].children) sum += nd[c].r * nd[c].r;
       nd[i].r = Math.sqrt(sum);
-    }
-  }
-  // --- Stammdicke ------------------------------------------------------------
-  // Ein Aufschlag auf das, was das Pipe-Modell gerechnet hat, und er wächst mit
-  // der Stärke selbst: ganz unten voll, an den Zweigen nicht mehr messbar. Ein
-  // gleichmäßiger Faktor täte es nicht — der machte aus jedem Zweig einen
-  // Knüppel und ließe das Verhältnis, in dem der Baum steht, unverändert.
-  //
-  // Maß ist der Halbmesser der Wurzel, also der dickste im Baum. Er wird
-  // deshalb vor dem Aufschlag gemerkt und danach neu genommen.
-  {
-    const dicke = cl(num(cfg.holz.stammDicke, 100), 100, 200) / 100;
-    if (dicke > 1.0001){
-      const R = Math.max(nd[0].r, 1e-6);
-      for (const k of nd) k.r *= 1 + (dicke - 1) * cl(k.r / R, 0, 1);
     }
   }
   const wurzelR = Math.max(nd[0].r, 1e-6);
@@ -981,112 +902,21 @@ export function baueSkelett(cfg, huelle){
   }
 
   // --- Knorrigkeit -----------------------------------------------------------
-  // Dreidimensionaler Versatz jedes einzelnen Punktes um den glatten Kurs.
-  // Drei Regler teilen sich den Baum, und zwar nach dem Weg, den das Holz vom
-  // Boden bis in die Spitze nimmt:
+  // Dreidimensionaler Versatz jedes einzelnen Punktes. Der Betrag hängt an der
+  // Stärke des Holzes an dieser Stelle: ein Stamm von vierzig Zentimetern darf
+  // um Handbreit ausweichen, ein Zweig von zwei nur um Fingerbreit. Dünner
+  // heißt also weniger — für beide Regler gleich.
   //
-  //   Schaft   der Hauptstamm mit seinem Hilfssegment, für sich allein.
-  //   Stamm    dort, wo ein Ast den Stamm verlässt.
-  //   Hülle    ganz außen, an den Zweigenden — dort sitzt die Hülle.
-  //
-  // Zwischen Stamm und Hülle läuft es linear. Gemessen wird dabei nicht die
-  // Entfernung vom Stamm in Metern, sondern der Anteil am Weg: wie weit ist
-  // dieser Knoten schon draußen, verglichen mit dem längsten Weg, der von hier
-  // aus noch bis zu einer Spitze führt. Ein kurzer Ast wird dadurch auf seiner
-  // Länge ebenso ganz durchlaufen wie ein langer, und beide sind an ihrem Ende
-  // gleich knorrig.
-  //
-  // Und ebenso wandert das Maß mit, an dem der Versatz gemessen wird:
-  //
-  //   Am Stamm ist es die Holzstärke. Ein Schaft, der um mehr als seine eigene
-  //   Dicke ausweicht, ist kein Baum mehr, sondern ein Seil.
-  //
-  //   An der Spitze ist es die Segmentlänge. Ein Zweig von zwei Zentimetern,
-  //   der nur um zwei Zentimeter ausweichen darf, bleibt wie mit dem Lineal
-  //   gezogen — dort ist nicht die Stärke das Maß, sondern der Schritt.
-  //
-  // Der zweite Punkt ist der eigentliche: gerechnet wurde früher überall mit
-  // der Holzstärke, und die ist innen am größten. Deshalb saß die Knorrigkeit
-  // am Stamm, obwohl der Regler „Hülle“ hieß.
+  //   Stamm   Schaft und Hilfssegment, sonst nichts.
+  //   Hülle   alles Holz ab dem Stamm nach außen.
   //
   // Der Wurzelknoten bleibt stehen; er steckt im Boden.
-  const knrF = cl(num(cfg.holz.knorrigSchaft, 14), 0, 100) / 100 * KNORRIG;
   const knrS = cl(num(cfg.holz.knorrigStamm,  14), 0, 100) / 100 * KNORRIG;
   const knrH = cl(num(cfg.holz.knorrigHuelle, 45), 0, 100) / 100 * KNORRIG;
-  if (knrF > 0 || knrS > 0 || knrH > 0){
-    // Zwei Wege je Knoten: der zurückgelegte vom Astansatz hierher und der
-    // längste, der von hier aus noch bevorsteht. Ihr Verhältnis ist das t des
-    // Verlaufs.
-    const vom = new Float64Array(nd.length);
-    const bis = new Float64Array(nd.length);
-    const folge = [];
-    {
-      const st = [0];
-      while (st.length){
-        const i = st.pop();
-        folge.push(i);
-        for (const c of nd[i].children){
-          // Der Weg beginnt erst da, wo ein Ast den Stamm verlässt.
-          vom[c] = nd[c].stammPfad ? 0 : vom[i] + nd[c].pos.distanceTo(nd[i].pos);
-          st.push(c);
-        }
-      }
-    }
-    // Rückwärts durch dieselbe Reihenfolge. In einer Tiefensuche steht ein Kind
-    // immer hinter seinem Elter, rückwärts ist es also fertig, ehe der Elter
-    // an die Reihe kommt — eine zweite Suche braucht es dafür nicht.
-    for (let q = folge.length - 1; q >= 0; q--){
-      const i = folge[q], e = nd[i].parent;
-      if (e < 0) continue;
-      const w = bis[i] + nd[i].pos.distanceTo(nd[e].pos);
-      if (w > bis[e]) bis[e] = w;
-    }
-
-    // Der kürzeste Schritt, der an einem Knoten hängt — nach unten zum Elter
-    // wie nach oben zu jedem Kind. Er allein taugt als Schranke: ein
-    // Achsenknoten, der einen halben Meter unter sich hat und einen Zentimeter
-    // über sich, darf sich nach dem halben Meter nicht bemessen. Genau daran
-    // klappte der Stamm oben um.
-    const nah = new Float64Array(nd.length).fill(Infinity);
-    for (let i = 1; i < nd.length; i++){
-      const e = nd[i].parent;
-      if (e < 0) continue;
-      const l = nd[i].pos.distanceTo(nd[e].pos);
-      if (l < nah[i]) nah[i] = l;
-      if (l < nah[e]) nah[e] = l;
-    }
-
+  if (knrS > 0 || knrH > 0){
     for (let i = 1; i < nd.length; i++){
       const k = nd[i];
-      const e = k.parent;
-      if (e < 0) continue;
-      const schritt = isFinite(nah[i]) ? nah[i] : k.pos.distanceTo(nd[e].pos);
-      let w;
-      if (k.stammPfad){
-        w = knrF * k.r;
-      } else {
-        const ganz = vom[i] + bis[i];
-        // Ein Knoten ohne Weg vor und hinter sich ist selbst die Spitze.
-        const t = ganz > 1e-6 ? cl(vom[i] / ganz, 0, 1) : 1;
-        const zweig = schritt * KNORRIG_SCHRITT;
-        w = (knrS + (knrH - knrS) * t) * (k.r + (zweig - k.r) * t);
-      }
-      // Die Schranke, und sie ist der Grund für den Knick oben an der Achse.
-      // Dort misst sich der Versatz an der Holzstärke, und die kann ein
-      // Vielfaches des Schritts sein: die Achsenknoten stehen da, wo ein Ast
-      // ansetzt, und bei tief gezogenem Zentrum drängen sich viele Ansätze auf
-      // wenigen Zentimetern. An zwanzig Zentimeter dickem Holz wurden aus
-      // Segmenten von einem Zentimeter Knicke von 136°, 148°, 158° — der Stamm
-      // klappte oben mehrfach um sich selbst.
-      //
-      // `eng` ist das Verhältnis von Schritt zu Durchmesser. Ist der Schritt
-      // der längere — der Normalfall, ein Zweig ist zehnmal so lang wie dick —,
-      // steht es auf eins und die Schranke ist die gewöhnliche. Wird das Holz
-      // dicker als der halbe Schritt, zieht sie sich mit an: eine Röhre kann
-      // nur so scharf abknicken, wie ihr Durchmesser es zulässt, sonst
-      // durchdringt sie sich selbst.
-      const eng = Math.min(1, schritt / Math.max(1e-6, 2 * k.r));
-      w = Math.min(w, schritt * KNORRIG_SCHRANKE * eng);
+      const w = (k.stammPfad ? knrS : knrH) * k.r;
       if (w <= 0) continue;
       // Gleichverteilte Richtung auf der Kugel, damit der Versatz keine
       // Vorzugsachse bekommt.
@@ -1184,16 +1014,12 @@ export function baueHolz(skel){
         // geradewegs weiterläuft. Sonst zöge der Stamm seine acht Kanten bis
         // in die feinsten Zweige hinauf — die Ringzahl steht je Strang fest.
         if (nodes[cur].stammPfad && !nodes[ch[0]].stammPfad){
-          // Der Leittrieb ist kein Ansatz, sondern eine Fortsetzung: dort läuft
-          // dasselbe Holz weiter, nur mit weniger Kanten. Er wird als solche
-          // vermerkt, damit der erste Ring passt.
-          st.push({ start: ch[0], vor: cur, weiter: true });
+          st.push({ start: ch[0], vor: cur });
           break;
         }
         cur = ch[0];
       }
-      if (kette.length >= 2)
-        straenge.push({ kette: kette, vor: s.vor >= 0, weiter: !!s.weiter });
+      if (kette.length >= 2) straenge.push({ kette: kette, vor: s.vor >= 0 });
     }
   }
 
@@ -1203,7 +1029,7 @@ export function baueHolz(skel){
   // Baums umstellbar — genau wie die Rindentextur.
   const schatten = r => 1 + 0.85 * (1 - Math.min(1, Math.sqrt(r / wurzelR)));
   const nVec = new V(), bVec = new V(), tVec = new V(), pVec = new V();
-  const t0 = new V(), tL = new V(), eVec = new V();
+  const t0 = new V(), tL = new V();
 
   for (const strang of straenge){
     const kette = strang.kette;
@@ -1233,29 +1059,8 @@ export function baueHolz(skel){
     const L = pts.length;
     // Der Ansatzring darf nicht auf Elternstärke aufblähen — sonst steht er als
     // offener Kragen aus der Rinde, und man sieht durch das Loch in den Ast.
-    //
-    // Für die Fortsetzung gilt das Gegenteil: sie ist der Strang selbst, nur
-    // mit anderer Kantenzahl. Dort gehört der volle Halbmesser hin, sonst
-    // klafft am oberen Ende der Achse eine Stufe von zwölf Prozent — und weil
-    // dort ein Ast von der Stärke des Stamms weitergeht, ist sie zu sehen.
-    if (strang.weiter) rad[0] = nodes[kette[0]].r;
-    else if (strang.vor)
+    if (strang.vor)
       rad[0] = Math.min(rad[1] * 1.3, Math.max(rad[1], nodes[kette[0]].r * 0.88));
-
-    // Und ebenso der erste Ring: bei einer Fortsetzung steht er nicht senkrecht
-    // auf dem neuen Segment, sondern auf der Winkelhalbierenden zwischen dem
-    // ankommenden und dem weiterführenden — genau wie an jedem Knoten mitten im
-    // Strang. Ohne das stoßen zwei Röhren gleicher Stärke stumpf aufeinander,
-    // und der Grat steht quer über den Stamm. Das ist der Knick am Ende des
-    // Hilfssegments.
-    let ein = false;
-    if (strang.weiter){
-      const e = nodes[kette[0]].parent;
-      if (e >= 0){
-        eVec.subVectors(nodes[kette[0]].pos, nodes[e].pos);
-        if (eVec.lengthSq() > 1e-12){ eVec.normalize(); ein = true; }
-      }
-    }
     if (auslauf) rad[L-1] = Math.max(rad[L-1] * 0.45, R_SPITZE * 0.3);
 
     tVec.copy(pts[1]).sub(pts[0]);
@@ -1271,10 +1076,7 @@ export function baueHolz(skel){
     for (let i=0;i<L;i++){
       const p = pts[i];
       if (i > 0) vAcc += p.distanceTo(pts[i-1]) / Math.max(1e-4, 2 * Math.PI * rad[i]);
-      if (i === 0){
-        tVec.copy(pts[1]).sub(p);
-        if (ein && tVec.lengthSq() > 1e-12) tVec.normalize().add(eVec);
-      }
+      if (i === 0)         tVec.copy(pts[1]).sub(p);
       else if (i === L-1)  tVec.copy(p).sub(pts[L-2]);
       else                 tVec.copy(pts[i+1]).sub(pts[i-1]);
       if (tVec.lengthSq() < 1e-12) tVec.set(0,1,0);
@@ -1504,7 +1306,7 @@ async function baueBillboardSatz(cfg, basis){
 // statt verzweigt — im Shader selbst gibt es keine Bedingung.
 function bbVertex(instanziert){ return /* glsl */`
   precision highp float;
-  uniform mat4 modelMatrix, modelViewMatrix, projectionMatrix, viewMatrix;
+  uniform mat4 modelMatrix, modelViewMatrix, projectionMatrix;
   in vec3  position;
   in vec3  normal;
   in vec2  uv;
@@ -1520,29 +1322,16 @@ function bbVertex(instanziert){ return /* glsl */`
       ? 'mat4 platz = instanceMatrix;\n    vTon = instanceColor;'
       : 'mat4 platz = mat4(1.0);\n    vTon = vec3(1.0);'}
     vec4 mv = modelViewMatrix * platz * vec4(position, 1.0);
+    // Gleichmäßige Skalierung mitnehmen — ein Sämling aus demselben Modell
+    // soll auch kleine Blätter haben. Bei Instanzen steckt sie in beiden
+    // Matrizen, also werden sie multipliziert.
     float s = length(modelMatrix[0].xyz) * length(platz[0].xyz);
-
-    // Wohin "oben" auf dem Bild zeigt — nicht für die Kamera, sondern für
-    // dieses eine Rechteck. Die Welt-Hochachse steht als zweite Spalte in der
-    // Blickmatrix; davon bleibt der Anteil quer zum Sehstrahl. Bei waagerechtem
-    // Blick ist das die Bildschirm-Senkrechte wie bisher; schaue ich in die
-    // Krone hinauf, kippt jedes Billboard für sich, und "unten" zeigt vom
-    // Zenit nach außen. Drehe ich mich dabei, wandert es mit.
-    vec3 blick = normalize(mv.xyz);
-    vec3 h3 = viewMatrix[1].xyz;
-    h3 -= blick * dot(h3, blick);
-    vec2 hoch = h3.xy;
-    float l = length(hoch);
-    // Genau im Zenit hat "unten" keine Bildrichtung mehr. Das trifft nur das
-    // eine Blatt in der Bildmitte, und für das gibt es keine richtige Antwort.
-    hoch = l > 1e-5 ? hoch / l : vec2(0.0, 1.0);
-    vec2 quer = vec2(hoch.y, -hoch.x);
-
-    mv.xy += (versatz.x * quer + versatz.y * hoch) * s;
+    mv.xy += versatz * s;
     vUv = uv;
     vSchicht = schicht;
+    // Eine Spur Licht von oben: das reicht, um der Krone Volumen zu geben,
+    // und kostet keinen einzigen Lichtdurchgang.
     vLicht = 0.78 + 0.22 * clamp(normal.y * 0.5 + 0.5, 0.0, 1.0);
-    vLicht *= vLicht; vLicht *= vLicht; vLicht *= vLicht +0.3; 
     gl_Position = projectionMatrix * mv;
   }`; }
 
@@ -1595,8 +1384,6 @@ function billboardMaterial(tex, instanziert){
         // Farbfilter anwenden (1 Taktzyklus auf der GPU)
         vec3 lin = texLinear * (uFarbe * vTon);
         // Gamma-Korrektur für die Ausgabe
-        // lin *= vLicht * vLicht * vLicht * vLicht;
-        lin *= vLicht;
         ausgabe = vec4(pow(lin, vec3(1.0 / 2.2)), 1.0);
 /*
         vec3 ton = uFarbe * vTon;
@@ -1942,11 +1729,11 @@ export function holzMaterial(cfg, basis){
 export const SONNE_AZIMUT  = 135;      // Grad, von Norden über Osten gezählt
 export const SONNE_NEIGUNG = 20;       // Grad aus der Senkrechten
 
-// Womit Laub und Holz in die mittlere Kronenhöhe eingehen, aus der der
-// Sonnenversatz gerechnet wird. Für die Deckung selbst zählen sie nicht: die
-// steht voll im Riss und wird erst in der Anwendung abgeschwächt.
-const GEWICHT_BLATT = 0.55;
-const GEWICHT_HOLZ  = 0.80;
+// Wie stark ein einzelnes Blatt verdunkelt. Deutlich unter eins, damit sich
+// mehrere Lagen erst zusammen zu tiefem Schatten aufsummieren — so bekommt der
+// Rand der Krone von selbst einen weichen Auslauf.
+const SCHATTEN_BLATT = 0.55;
+const SCHATTEN_HOLZ  = 0.80;
 // Weichzeichnung in Bildpunkten, bezogen auf 256. Ein Schlagschatten hat auch
 // in der Natur keine harte Kante.
 const SCHATTEN_WEICH = 2.0;
@@ -1961,30 +1748,20 @@ function sonnenVersatz(){
   return { x: -Math.sin(az) * t, z: Math.cos(az) * t };
 }
 
-// Eine Schicht des Texturarrays als Silhouette auf einer eigenen Leinwand. Die
-// Farbe des Laubs spielt für einen Schatten keine Rolle; übrig bleibt allein
-// seine Deckung — und die wandert hier aus dem Alphakanal in den Grauwert:
-// undurchsichtig wird weiß, durchsichtig schwarz, und die Leinwand selbst ist
-// überall undurchsichtig.
-//
-// Das ist die Vorbedingung dafür, dass sich zwei Blätter übereinander nicht
-// aufaddieren. Deckung im Alphakanal kann nur zusammengeblendet werden, und
-// Blenden heißt Aufsummieren; Deckung als Grauwert lässt sich vergleichen, und
-// „der hellere gewinnt“ ist genau die gesuchte Regel.
+// Eine Schicht des Texturarrays als schwarze Silhouette auf einer eigenen
+// Leinwand. Nur das Alpha des Bildes bleibt übrig — die Farbe des Laubs spielt
+// für einen Schatten keine Rolle.
 function silhouette(satz, k){
   const S = satz.textur.image.width;
   const c = document.createElement('canvas');
   c.width = c.height = S;
   const ctx = c.getContext('2d');
   const bild = ctx.createImageData(S, S);
-  const quelle = satz.textur.image.data;
-  const d = bild.data;
-  for (let i = 0; i < S * S; i++){
-    const a = quelle[k * S * S * 4 + i * 4 + 3];
-    d[i*4] = d[i*4+1] = d[i*4+2] = a;
-    d[i*4+3] = 255;
-  }
+  bild.data.set(satz.textur.image.data.subarray(k * S * S * 4, (k + 1) * S * S * 4));
   ctx.putImageData(bild, 0, 0);
+  ctx.globalCompositeOperation = 'source-in';
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, S, S);
   return c;
 }
 
@@ -2021,7 +1798,7 @@ async function risse(skel, cfg, satz, px, rahmen){
       const a = anker[i];
       const p = wirf(a.x, a.y, a.z);
       blatt.push({ x: p.x, z: p.z, h: a.h, k: sch[i * 4] });
-      const g = a.h * a.h * GEWICHT_BLATT;
+      const g = a.h * a.h * SCHATTEN_BLATT;
       hSumme += a.y * g; hGewicht += g;
       // Zur Ebene gedreht und beliebig gerollt reicht das Quadrat bis zu
       // seiner halben Diagonale.
@@ -2038,7 +1815,7 @@ async function risse(skel, cfg, satz, px, rahmen){
     holz.push({ a: a, b: b, r: k.r });
     fasse(a, k.r); fasse(b, k.r);
     const laenge = Math.hypot(k.pos.x - e.pos.x, k.pos.y - e.pos.y, k.pos.z - e.pos.z);
-    const g = laenge * 2 * k.r * GEWICHT_HOLZ;
+    const g = laenge * 2 * k.r * SCHATTEN_HOLZ;
     hSumme += (k.pos.y + e.pos.y) / 2 * g; hGewicht += g;
   }
   if (!isFinite(x0)) return null;
@@ -2052,33 +1829,15 @@ async function risse(skel, cfg, satz, px, rahmen){
   const proMeter = px / breite;
 
   // --- Zeichnen -------------------------------------------------------------
-  // Gezeichnet wird in Weiß auf Schwarz und mit `lighten`: von zwei Werten
-  // bleibt der hellere stehen. Was ein Blatt deckt, deckt es damit ganz, und
-  // zwei Blätter übereinander decken genau so viel wie eines.
-  //
-  // Vorher wurde mit Deckkraft übereinandergeblendet, und Blenden summiert:
-  // jede weitere Lage schob den Wert wieder ein Stück Richtung Schwarz. In
-  // einer dichten Krone liegen leicht ein Dutzend Rechtecke übereinander —
-  // dort lief der Riss in die Sättigung, während er am dünn besetzten Rand
-  // blass blieb. Der Schatten bekam dadurch eine harte, viel zu runde Mitte
-  // und einen ausgefransten Saum, und wie kräftig er insgesamt ausfiel, hing
-  // an der Zahl der Billboards statt an der Gestalt des Baums.
-  //
-  // Jetzt steht im Riss die Deckung selbst und sonst nichts: 255, wo etwas im
-  // Weg ist, weniger nur da, wo das Blattbild selbst durchscheinend ist.
-  // Abgeschwächt wird in der Anwendung, die den Riss auf den Boden bringt.
   const c = document.createElement('canvas');
   c.width = c.height = px;
   const ctx = c.getContext('2d', { willReadFrequently: true });
-  ctx.fillStyle = '#000';                        // schwarz = freier Boden
-  ctx.fillRect(0, 0, px, px);
-  ctx.globalCompositeOperation = 'lighten';
   ctx.filter = 'blur(' + (SCHATTEN_WEICH * px / 256).toFixed(2) + 'px)';
   const bx = x => (x - mitteX) * proMeter + px / 2;
   const bz = z => (z - mitteZ) * proMeter + px / 2;
 
-  // Das Holz ist undurchsichtig und deckt deshalb voll.
-  ctx.strokeStyle = '#fff';
+  ctx.globalAlpha = SCHATTEN_HOLZ;
+  ctx.strokeStyle = '#000';
   ctx.lineCap = 'round';
   for (const s of holz){
     ctx.lineWidth = Math.max(1, s.r * 2 * proMeter);
@@ -2088,6 +1847,7 @@ async function risse(skel, cfg, satz, px, rahmen){
     ctx.stroke();
   }
 
+  ctx.globalAlpha = SCHATTEN_BLATT;
   const masken = new Map();
   for (const b of blatt){
     let m = masken.get(b.k);
@@ -2096,12 +1856,10 @@ async function risse(skel, cfg, satz, px, rahmen){
     ctx.drawImage(m, bx(b.x) - s / 2, bz(b.z) - s / 2, s, s);
   }
 
-  // Die Deckung steht jetzt im Grauwert und nicht mehr im Alphakanal — die
-  // Leinwand ist überall undurchsichtig. Ausgegeben wird wie bisher: 0 heißt
-  // frei, 255 voller Schatten.
+  // Was hier steht, ist die Deckung: 0 heißt frei, 255 voller Schatten.
   const roh = ctx.getImageData(0, 0, px, px).data;
   const grau = new Uint8Array(px * px);
-  for (let i = 0; i < px * px; i++) grau[i] = roh[i * 4];
+  for (let i = 0; i < px * px; i++) grau[i] = roh[i * 4 + 3];
 
   return {
     bild:   'data:image/png;base64,' + await grauPNG(grau, px, px),
@@ -2504,9 +2262,6 @@ export function ansichtMaterial(tex, instanziert){
   const m = new THREE.MeshBasicMaterial({
     map: tex, alphaTest: 0.5, transparent: false,
     side: THREE.FrontSide,
-    // Der Nebel gehört in die Szene, nicht ins Bild — aber die Krone der nahen
-    // Bäume kennt ihn auch nicht, und zwei verschiedene Dunstschleier über
-    // demselben Wald fielen mehr auf als gar keiner.
     fog: false, toneMapped: false
   });
   m.onBeforeCompile = sh => {
@@ -2518,12 +2273,21 @@ export function ansichtMaterial(tex, instanziert){
         tafelS *= length(instanceMatrix[0].xyz);
       #endif
       mvPosition = modelViewMatrix * mvPosition;
-      mvPosition.xy += transformed.xy * tafelS;
+
+      // Die Welt-Hochachse im Blickraum: die zweite Spalte der Blickmatrix.
+      // Die Tiefe wird verworfen, es bleibt die Richtung, in die "oben" auf
+      // dem Bild zeigt — lege ich den Kopf schief, kippt die Tafel mit.
+      vec2 hoch = viewMatrix[1].xy;
+      float l = length(hoch);
+      // Genau im Zenit (oder Nadir) hat "oben" keine Richtung mehr auf dem
+      // Bild; dort bleibt es beim Bildschirm-Oben, damit nichts kollabiert.
+      hoch = l > 1e-4 ? hoch / l : vec2(0.0, 1.0);
+      vec2 quer = vec2(hoch.y, -hoch.x);
+
+      mvPosition.xy += (transformed.x * quer + transformed.y * hoch) * tafelS;
       gl_Position = projectionMatrix * mvPosition;
     `);
   };
-  // Zwei Fassungen desselben Programms brauchen zwei Schlüssel, sonst hält
-  // three die instanzierte für die gewöhnliche.
   m.customProgramCacheKey = () => 'ansicht' + (instanziert ? 'I' : '');
   return m;
 }
@@ -2561,34 +2325,6 @@ export async function ansichtTafeln(ansicht, anzahl){
   netz.castShadow = netz.receiveShadow = false;
   netz.userData.ansicht = ansicht;
   return netz;
-}
-
-// =============================================================================
-//  Farbvarianten
-// =============================================================================
-
-// Die Töne, aus denen im Spiel je Baum einer gewürfelt wird: ungefärbt und die
-// fünf Varianten aus der Datei, sechs gleich wahrscheinliche Möglichkeiten.
-//
-//   const toene = laubtoene(cfg);
-//   wald.faerbe(i, toene[(zufall() * toene.length) | 0]);
-//
-// Das Würfeln bleibt beim Aufrufer, und das mit Absicht: eine Landschaft, die
-// bei gleichem Startwert gleich aussehen soll, braucht ihren eigenen Zufall
-// und nicht Math.random.
-//
-// Ungefärbt steht als erster Eintrag fest darin, auch wenn eine Variante
-// ebenfalls auf eins steht — die Verteilung ist eine Eigenschaft des Spiels
-// und nicht der eingetragenen Werte. Wer den weißen Baum nicht will, trägt
-// fünf Varianten ein und lässt den ersten Eintrag weg.
-export function laubtoene(cfg){
-  const f = (cfg && cfg.laubfarben) || [];
-  const out = [new THREE.Color(1, 1, 1)];
-  for (let i = 0; i < LAUBFARBEN; i++){
-    const t = Array.isArray(f[i]) ? f[i] : [1, 1, 1];
-    out.push(new THREE.Color().setRGB(num(t[0], 1), num(t[1], 1), num(t[2], 1)));
-  }
-  return out;
 }
 
 // =============================================================================
@@ -2739,8 +2475,7 @@ function ergaenzeBasis(url, opt){
   return o;
 }
 
-export default { STANDARD, VERSION, MOTIV, LAUBFARBEN, laubtoene,
-                 normiere, baueHuelle, baueSkelett,
+export default { STANDARD, VERSION, MOTIV, normiere, baueHuelle, baueSkelett,
                  baueHolz, baueBillboards, ladeBillboardSatz, holzMaterial,
                  erzeugeBaum, erzeugeBaumInstanzen, ladeBaum,
                  ladeBaumInstanzen, packe, baueSchatten, baueSchattenkarte,

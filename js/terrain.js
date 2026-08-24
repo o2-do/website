@@ -88,8 +88,17 @@ export function createHeightField(cfg) {
 }
 
 /**
- * Horizont: runde Scheibe mit quadratischem Loch, exakt in der Groesse des
- * Bodengitters. Kein Ueberlappen -> kein Z-Fighting, keine Naht.
+ * Horizont: runde Scheibe mit rundem Loch, exakt in der Groesse der Wiese.
+ * Kein Ueberlappen -> kein Z-Fighting, keine Naht.
+ *
+ * DAS LOCH WIRD PUNKT FUER PUNKT GESETZT, nicht als Bogen. `absarc` bekaeme
+ * die Segmentzahl der ShapeGeometry, und die ist eine andere als die des
+ * Wiesenrandes - beide Vielecke lehnen von innen am selben Kreis, das gröbere
+ * laege dann innerhalb des feineren und die Scheibe schoebe sich unter die
+ * Wiese. Mit `cfg.randSegmente` fallen die Ecken exakt zusammen.
+ *
+ * Die Wicklung ist der Aussenkontur entgegengesetzt; die Shape-Ebene wird
+ * spaeter um -90 Grad um X gedreht, y wird dabei zu -z.
  */
 export function buildHorizon(cfg, material, radius = cfg.horizont) {
   const h = cfg.durchmesser / 2;
@@ -97,10 +106,12 @@ export function buildHorizon(cfg, material, radius = cfg.horizont) {
   shape.absarc(0, 0, radius, 0, Math.PI * 2, false);
 
   const hole = new THREE.Path();          // Wicklung gegenlaeufig zur Aussenkontur
-  hole.moveTo(-h, -h);
-  hole.lineTo(-h, h);
-  hole.lineTo(h, h);
-  hole.lineTo(h, -h);
+  const n = cfg.randSegmente;
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    const x = Math.cos(a) * h, y = -Math.sin(a) * h;
+    if (i === 0) hole.moveTo(x, y); else hole.lineTo(x, y);
+  }
   hole.closePath();
   shape.holes.push(hole);
 
@@ -125,10 +136,11 @@ export function buildHorizon(cfg, material, radius = cfg.horizont) {
  * Kartenmaske: ein weisses Quadrat mit rundem Ausschnitt, flach ueber den
  * Garten gelegt. Nur in der Vogelperspektive sichtbar.
  *
- * Sie beschneidet den quadratischen Garten optisch auf einen runden: was
- * ausserhalb des Kreises liegt - die vier Ecken der Wiese - verschwindet unter
- * dem Weiss. Der Ausschnitt ist minimal kleiner als der Garten breit ist, damit
- * an der Rundung kein Spalt aufgeht.
+ * Sie deckt alles ab, was ausserhalb des Gartenkreises liegt. Seit die Wiese
+ * selbst auf dem Kreis endet, ist das nur noch der Zugang zum Tor, der ein
+ * Stueck nach draussen laeuft - frueher waren es auch die vier Ecken der
+ * quadratischen Wiese. Der Ausschnitt ist minimal kleiner als der Garten breit
+ * ist, damit an der Rundung kein Spalt aufgeht.
  *
  * DAS QUADRAT IST WEIT GROESSER ALS DER GARTEN, und das ist keine Vorsicht,
  * sondern Notwendigkeit. Die Karte ist eine Parallelprojektion aus 35 Grad:
@@ -170,14 +182,18 @@ export function buildMapMask(cfg, material) {
 }
 
 /**
- * Kasten unter dem Garten: vier senkrechte Rechtecke an den Quadratseiten,
- * knapp unter der Kante angesetzt und so tief, dass auch das tiefste Tal
- * darueber liegt.
+ * Kasten unter dem Garten: eine senkrechte Wand rings um die Wiesenkante,
+ * knapp unter ihr angesetzt und so tief, dass auch das tiefste Tal darueber
+ * liegt.
  *
  * Er wird nur in der Karte gebraucht. Dort steht die Kamera bei flacher
  * Neigung fast waagerecht, und bei kraeftigem Relief sieht man dann seitlich
  * unter die Wiese - der Boden ist ein Hoehenfeld ohne Unterseite, man schaut
  * also durch ihn hindurch. Der Kasten macht ihn zu einem geschlossenen Koerper.
+ *
+ * Er steht auf DENSELBEN Ecken wie Wiesenrand und Horizontscheibe
+ * (`cfg.randSegmente`) - vier Waende am Quadrat waeren es einmal, seit die
+ * Wiese rund ist, nicht mehr.
  */
 export function buildMapBox(cfg, material, tiefe) {
   const h = cfg.durchmesser / 2;
@@ -187,9 +203,14 @@ export function buildMapBox(cfg, material, tiefe) {
   const pos = [];
   const idx = [];
   // Reihum, damit die Aussenseite jeder Wand nach aussen zeigt
-  const ecken = [[-h, -h], [h, -h], [h, h], [-h, h]];
-  for (let i = 0; i < 4; i++) {
-    const a = ecken[i], b = ecken[(i + 1) % 4];
+  const n = cfg.randSegmente;
+  const ecken = [];
+  for (let i = 0; i < n; i++) {
+    const w = (i / n) * Math.PI * 2;
+    ecken.push([Math.cos(w) * h, Math.sin(w) * h]);
+  }
+  for (let i = 0; i < n; i++) {
+    const a = ecken[i], b = ecken[(i + 1) % n];
     const o = pos.length / 3;
     pos.push(a[0], oben, a[1], b[0], oben, b[1], b[0], unten, b[1], a[0], unten, a[1]);
     idx.push(o, o + 1, o + 2, o, o + 2, o + 3);

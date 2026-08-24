@@ -28,7 +28,7 @@ const dist = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
 /**
  * Rangfolge der Wege. DER HAUPTWEG GEWINNT: wo zwei Flaechen denselben Boden
  * decken, gilt seine Hoehe, und die anderen haben sich daran anzuschliessen
- * (siehe wegknoten.js). Der Zugang zum Tor steht dazwischen - er ist ein
+ * (siehe `wegnetz.js`). Der Zugang zum Tor steht dazwischen - er ist ein
  * angelegter Weg, aber der Rundweg bleibt die Hauptsache.
  */
 export const WEG_RANG = { rund: 2, tor: 1, abk: 0 };
@@ -270,9 +270,9 @@ function makePath(pts, total, closed, index, cfg, hf, liftIndex, art) {
     tx /= tl; tz /= tl;
     if (k > 0) s += dist(p, pts[k - 1]);
     // `roll` ist die Querneigung: Hoehenzuwachs je Meter seitlichem Versatz in
-    // Richtung +n. Sie bleibt null, solange der Weg fuer sich allein liegt -
-    // `verknuepfeWege` (wegknoten.js) setzt sie dort, wo er an einen anderen
-    // anschliesst und dessen Ebene uebernehmen muss.
+    // Richtung +n. Sie ist ueberall null, seit die Hoehe eines Wegpunktes nicht
+    // mehr gerechnet, sondern von einem Referenzpunkt geerbt wird
+    // (`wegnetz.js`). Das Feld steht noch, weil der Wegindex es liest.
     samples.push({ x: p.x, z: p.z, y: hf.heightAt(p.x, p.z), tx, tz, nx: -tz, nz: tx, s, roll: 0, glon: 0 });
   }
   // Abkuerzungen haben ihren eigenen Belag, ihre eigene Kachelung und ihre
@@ -375,16 +375,6 @@ function planShortcuts(loop, cfg) {
   return out;
 }
 
-/* ---------------- Anschluss an eine fremde Wegflaeche ---------------- */
-
-/**
- * Wie tief die Stirnkante eines einmuendenden Weges unter dem anderen liegen
- * soll. Ein paar Zentimeter Ueberlappung sind noetig, damit an der Naht kein
- * Streifen Wiese durchblitzt - aber eben nur ein paar: frueher waren es
- * pauschal 12 cm, und so viel Trampelpfad lag dann sichtbar auf dem Pflaster.
- */
-const MAUL_UEBERSTAND = 0.03;
-
 /** Abstand zur FLAECHE eines Weges; negativ heisst drauf. */
 export function flaechenAbstand(p, x, z) {
   const sm = p.samples;
@@ -404,125 +394,6 @@ export function flaechenAbstand(p, x, z) {
   return Math.sqrt(best) - p.width / 2;
 }
 
-/**
- * Die ERSTE Stelle zwischen `von` und `bis`, an der `fn` den Zielwert kreuzt -
- * abgeschritten, dann halbiert. Null, wenn es keine gibt.
- *
- * Abgeschritten und nicht bloss halbiert, weil `flaechenAbstand` laengs einer
- * Geraden NICHT MONOTON ist: wer weit genug laeuft, durchstoesst das Band und
- * kommt auf der anderen Seite wieder heraus. Eine blosse Halbierung ueber ein
- * weites Intervall findet dann irgendeine der Nullstellen - oder, wenn ihre
- * Intervallgrenzen zufaellig beide draussen liegen, gar keine und liefert
- * stillschweigend den Rand.
- *
- * Die Richtung des Abschreitens entscheidet also mit, welche Kante gefunden
- * wird, und das ist Absicht: von der Wegmitte nach aussen die Austrittskante,
- * von draussen nach innen die dem Stichweg zugewandte.
- */
-function querung(fn, ziel, von, bis, schritt = 0.05) {
-  const n = Math.max(2, Math.ceil(Math.abs(bis - von) / schritt));
-  const dv = (bis - von) / n;
-  const drueber = (v) => (dv > 0 ? fn(v) >= ziel : fn(v) <= ziel);
-  if (drueber(von)) return von;
-  let lo = von;
-  for (let i = 1; i <= n; i++) {
-    const v = von + dv * i;
-    if (!drueber(v)) { lo = v; continue; }
-    let hi = v;
-    for (let k = 0; k < 24; k++) {
-      const mid = (lo + hi) / 2;
-      if (drueber(mid)) hi = mid; else lo = mid;
-    }
-    return (lo + hi) / 2;
-  }
-  return null;
-}
-
-/**
- * Von einem Punkt aus laengs (rx, rz) laufen, bis die Flaeche von `ziel`
- * verlassen ist - abgeschritten, nicht gerechnet.
- *
- * Die alte Formel halbeBreite / sin(Winkel) unterstellt eine gerade Wegkante.
- * Bei rechtwinkligem Anschluss geht das gut; bei flachem Schnittwinkel laeuft
- * die Kuerzung mehrere Meter am gekruemmten Weg entlang, und dann stimmt sie
- * nicht mehr. Gemessen standen einzelne Bandecken dadurch bis zu 45 cm neben
- * dem Weg im Gras.
- */
-export function kanteSuchen(ziel, px, pz, rx, rz, weite) {
-  const v = querung((t) => flaechenAbstand(ziel, px + rx * t, pz + rz * t),
-                    -MAUL_UEBERSTAND, 0, weite);
-  return v === null ? ziel.width / 2 : v;
-}
-
-/**
- * Das Gegenstueck: von DRAUSSEN kommend die Stelle suchen, an der die Flaeche
- * von `ziel` um den Ueberstand betreten ist.
- *
- * Zwei Funktionen und nicht eine mit Schalter, weil die beiden Faelle
- * verschiedene Startbedingungen haben. `kanteSuchen` beginnt auf der
- * Mittellinie, also drinnen, und sucht den Austritt; hier beginnt es draussen
- * und sucht den Eintritt. Wer den falschen nimmt, bekommt sofort eine Antwort -
- * naemlich den Startpunkt, der die Bedingung ja bereits erfuellt.
- */
-export function eintrittSuchen(ziel, px, pz, rx, rz, weite) {
-  return querung((t) => -flaechenAbstand(ziel, px + rx * t, pz + rz * t),
-                 MAUL_UEBERSTAND, 0, weite);
-}
-
-/**
- * Das Maul eines einmuendenden Weges: wie weit jede Ecke der Stirnkante laengs
- * der eigenen Tangente verschoben wird, damit sie auf `ziel` landet.
- *
- * Beide Ecken werden EINZELN gesucht - das ist der Unterschied zur frueheren
- * Formel, die einen einzigen Wert antisymmetrisch auf beide Seiten verteilte.
- * Antisymmetrisch ist richtig, solange die Kante des anderen Weges an dieser
- * Stelle gerade ist; ist sie gekruemmt, brauchen die beiden Ecken verschieden
- * viel, und die Differenz stand als Spalt auf der einen und als Ueberlappung
- * auf der anderen Seite desselben Maules.
- *
- * Zuletzt wird die GANZE Kante geprueft, nicht nur ihre Ecken: zwischen zwei
- * Punkten auf einer gekruemmten Kante spannt sich eine Sehne, und die ragt in
- * der Mitte wieder heraus. Wo das passiert, rueckt das Maul als Ganzes nach.
- *
- * Zurueck kommt `{ mitte, spreiz }`; `bandPunkt` setzt daraus
- * `mitte + spreiz * sgn` zusammen.
- */
-export function maulAnpassen(ziel, weg, k, richtung) {
-  const e = weg.samples[k];
-  const halbe = weg.width / 2;
-  const ecke = (sgn, d) => ({
-    x: e.x + e.nx * halbe * sgn + e.tx * d,
-    z: e.z + e.nz * halbe * sgn + e.tz * d,
-  });
-  // `richtung` zeigt vom anderen Weg WEG - am Anfang laengs der Tangente, am
-  // Ende gegen sie. Alle Suchen laufen deshalb ueber `v` mit d = richtung * v,
-  // und der Flaechenabstand waechst in beiden Faellen mit v.
-  const spanne = 1.5 * ziel.width;
-  // VON AUSSEN NACH INNEN abgeschritten: gesucht ist die dem einmuendenden Weg
-  // ZUGEWANDTE Kante, nicht die dahinterliegende. Wo gar keine Querung liegt -
-  // ein Maul, das breiter ist als der Weg unter ihm -, bleibt die Kante stumpf.
-  const loese = (f) => querung(f, -MAUL_UEBERSTAND, spanne, -spanne);
-
-  const proEcke = (sgn) =>
-    loese((v) => { const q = ecke(sgn, richtung * v); return flaechenAbstand(ziel, q.x, q.z); });
-  const vM = proEcke(-1), vP = proEcke(1);
-  if (vM === null || vP === null) return { mitte: 0, spreiz: 0 };
-  const spreiz = ((vP - vM) / 2) * richtung;
-
-  const kanteMax = (v) => {
-    let mx = -Infinity;
-    for (let i = 0; i <= 8; i++) {
-      const sgn = -1 + (2 * i) / 8;
-      const q = ecke(sgn, richtung * v + spreiz * sgn);
-      const f = flaechenAbstand(ziel, q.x, q.z);
-      if (f > mx) mx = f;
-    }
-    return mx;
-  };
-  const v = loese(kanteMax);
-  if (v === null) return { mitte: 0, spreiz: 0 };
-  return { mitte: richtung * v, spreiz };
-}
 
 /* ---------------- Aufbau ---------------- */
 
@@ -548,107 +419,57 @@ export function buildPaths(hf, cfg) {
   const cuts = planShortcuts(paths[0], cfg);
   const loopWeg = paths[0];
   for (const c of cuts) {
-    const a = c.a, b = c.b;
-    const dx = b.x - a.x, dz = b.z - a.z;
-    const laenge = Math.hypot(dx, dz);
-    if (laenge < 1e-6) continue;
-    const ux = dx / laenge, uz = dz / laenge;
-
-    // Von der Mittellinie des Rundwegs nach aussen laufen, bis seine Flaeche
-    // verlassen ist. Der Stichweg soll an dessen KANTE aufhoeren, nicht bis in
-    // die Mitte laufen - sonst liegt ein Meter Trampelpfad quer ueber dem
-    // Pflaster, und man sieht die Naht von jedem Standpunkt aus.
-    const ka = kanteSuchen(loopWeg, a.x, a.z, ux, uz, laenge);
-    const kb = kanteSuchen(loopWeg, b.x, b.z, -ux, -uz, laenge);
-    if (laenge - ka - kb < 3 * cfg.wegBreiteAbk) continue;
-
-    const von = { x: a.x + ux * ka, z: a.z + uz * ka };
-    const bis = { x: b.x - ux * kb, z: b.z - uz * kb };
+    // BIS ZUR MITTELLINIE, NICHT BIS ZUR KANTE.
+    //
+    // Frueher wurde der Stichweg auf die Kante des Rundwegs gekuerzt und dort
+    // schraeg angeschnitten - mit gesuchtem Endpunkt, gesuchtem Anschnitt und
+    // drei Zentimetern Ueberstand, damit an der Naht keine Fuge aufgeht. Das
+    // war der Preis dafuer, dass beide Baender getrennt gerechnet wurden.
+    //
+    // Jetzt laeuft er absichtlich bis in die Mitte hinein. Wo seine Kanten die
+    // des Rundwegs kreuzen, entstehen GEMEINSAME Punkte (wegnetz.js), und was
+    // dahinter liegt, faellt beim Verschneiden weg. Eine Fuge kann es nicht
+    // geben, weil es keine zwei Kanten mehr gibt, die sich treffen muessten.
+    const von = { x: c.a.x, z: c.a.z };
+    const bis = { x: c.b.x, z: c.b.z };
+    const laenge = Math.hypot(bis.x - von.x, bis.z - von.z);
+    if (laenge < 3 * cfg.wegBreiteAbk) continue;
     const line = resample([von, bis], step, false);
-    if (line.total < 3 * cfg.wegBreiteAbk) continue;
 
     // EINE ABKUERZUNG DARF DEN RUNDWEG UNTERWEGS NICHT NOCHMAL UEBERQUEREN.
     //
     // Die Sehne zwischen zwei Punkten einer maeandernden Schlaufe kann einen
     // dritten Ast schneiden. Was dann entsteht, ist keine Abkuerzung, sondern
     // ein Trampelpfad, der ueber den Weg laeuft und ein Stueck weiter neben ihm
-    // wieder endet - haette man ihn an der Kreuzung enden lassen, waere er
-    // kuerzer und nuetzlicher gewesen. Gemessen war der Schaden erheblich: an
-    // so einer Stelle lagen zwei Aeste des Rundwegs 2,5 m nebeneinander und
-    // einen halben Meter auseinander in der Hoehe, und der Stichweg klemmte
-    // dazwischen. Die beiden Enden sind ausgenommen - dort SOLL er drunter
-    // liegen.
+    // wieder endet. Die beiden Enden sind ausgenommen - dort SOLL er drueber
+    // liegen; wie weit, sagt die halbe Rundwegbreite plus ein Sample.
+    const rand = Math.ceil((loopWeg.width / 2) / step) + 1;
     let quert = false;
-    for (let k = 2; k < line.pts.length - 2 && !quert; k++) {
+    for (let k = rand; k < line.pts.length - rand && !quert; k++) {
       quert = flaechenAbstand(loopWeg, line.pts[k].x, line.pts[k].z) < -0.05;
     }
     if (quert) continue;
 
-    const weg = makePath(line.pts, line.total, false, paths.length, cfg, hf, 1);
-
-    // Angeschnitten wird nur, solange die Abkuerzung NICHT BREITER ist als der
-    // Weg, in den sie muendet. Sonst hat der Schraeganschnitt kein Ziel: seine
-    // Stirnkante soll auf der Kante des Rundwegs liegen, aber ein 3,5 m breites
-    // Maul reicht an einem 0,6 m breiten Weg links und rechts ins Gras, so weit
-    // man es auch hineinschiebt.
-    if (weg.width <= loopWeg.width) {
-      weg.anschnitt = {
-        start: maulAnpassen(loopWeg, weg, 0, 1),
-        ende: maulAnpassen(loopWeg, weg, weg.samples.length - 1, -1),
-      };
-    }
-    paths.push(weg);
+    paths.push(makePath(line.pts, line.total, false, paths.length, cfg, hf, 1));
   }
   return paths;
 }
 
 /**
- * Ein Punkt auf der Bandkante - und die einzige Stelle, an der der
- * Schraeganschnitt der Abkuerzungen steckt.
+ * Ein Punkt auf der Bandkante: die Stuetzstelle plus halbe Breite quer.
  *
- * Ohne ihn endet ein Stichweg mit einer STUMPFEN Kante quer zu seiner eigenen
- * Laufrichtung. Wo er schraeg auf den Rundweg trifft, klafft dann auf der
- * einen Seite ein Zwickel Wiese zwischen beiden Baendern, waehrend die andere
- * Seite ueber die Wegkante hinausragt.
- *
- * `anschnitt` sagt, um wie viel die Kante je Seite laengs der eigenen Tangente
- * verschoben wird: `mitte + spreiz * sgn`. Der antisymmetrische Anteil
- * (`spreiz`) kippt die Kante in den Schnittwinkel, der gemeinsame (`mitte`)
- * schiebt das ganze Maul so tief unter den Rundweg, dass auch die Sehne
- * zwischen den Ecken noch drunter liegt.
- *
- * Frueher stand hier nur der antisymmetrische Anteil. Das ist richtig, solange
- * die Kante des Rundwegs an dieser Stelle gerade ist - ist sie gekruemmt,
- * brauchen die beiden Ecken verschieden viel, und die Differenz stand als
- * Spalt auf der einen und als Ueberlappung auf der anderen Seite desselben
- * Maules. Siehe `maul` in `buildPaths`.
- *
- * Der Versatz bleibt linear in `sgn`, damit die Stirnkante eine Gerade
- * zwischen den beiden Ecken bleibt.
+ * Hier stand einmal der SCHRAEGANSCHNITT - eine Verschiebung laengs der
+ * eigenen Tangente, mit der die Stirnkante eines Stichwegs auf der Kante des
+ * Rundwegs zu liegen kam. Sie ist entfallen, weil es nichts mehr anzupassen
+ * gibt: der Stichweg laeuft jetzt bis in die Mitte des Rundwegs hinein, und wo
+ * die Kanten sich kreuzen, wird geschnitten statt gepasst.
  */
 export function bandPunkt(path, k, sgn, half, lift) {
   const p = path.samples[k];
-  const a = path.anschnitt;
-  let d = 0;
-  if (a) {
-    if (k === 0) d = a.start.mitte + a.start.spreiz * sgn;
-    else if (k === path.samples.length - 1) d = a.ende.mitte + a.ende.spreiz * sgn;
-  }
-  // Die Querneigung wirkt linear ueber den Querschnitt - deshalb `half * sgn`
-  // und nicht etwa der Betrag.
-  //
-  // Der Anschnitt verschiebt die Ecke LAENGS der Tangente, also muss auch das
-  // Laengsgefaelle mit - sonst behaelt eine um einen halben Meter vorgeschobene
-  // Ecke die Hoehe ihrer Stuetzstelle und liegt damit zweistellig daneben.
-  //
-  // `glon` ist das Gefaelle der ANSCHLUSSEBENE, hinterlegt von `verknuepfeWege`.
-  // Aus den Nachbarstuetzstellen darf es nicht genommen werden: die liegen
-  // schon in der Auslauframpe, und die ist steiler.
-  const dy = d !== 0 && p.glon ? p.glon * d : 0;
   return {
-    x: p.x + p.nx * half * sgn + p.tx * d,
-    z: p.z + p.nz * half * sgn + p.tz * d,
-    y: p.y + lift + p.roll * half * sgn + dy,
+    x: p.x + p.nx * half * sgn,
+    z: p.z + p.nz * half * sgn,
+    y: p.y + lift + p.roll * half * sgn,
   };
 }
 
@@ -706,10 +527,9 @@ export function makePathIndex(paths, cfg, cell = 1.5) {
   // seit die Abkuerzungen schmaler sein duerfen als der Rundweg, gibt es keine
   // Wegbreite mehr, sondern nur noch die Breite dieses Weges.
   //
-  // Die Querneigung steht ebenfalls je Segment darin. Solange sie ueberall
-  // null war, galt fuer den ganzen Querschnitt die Hoehe der Mittellinie und
-  // der seitliche Versatz war belanglos; seit ein Weg sich an der Einmuendung
-  // in die Ebene eines anderen legt (wegknoten.js), ist er das nicht mehr.
+  // Die Querneigung steht ebenfalls je Segment darin - heute ueberall null,
+  // seit die Hoehen aus dem Netz kommen (`wegnetz.js`) und nicht mehr aus
+  // dieser Tabelle.
   const STRIDE = 12;
   // Die vorkommenden halben Breiten, entdoppelt. In der Praxis sind das zwei
   // (Rundweg und Abkuerzung), hoechstens drei - und genau darauf beruht der
@@ -958,6 +778,23 @@ export function makePathIndex(paths, cfg, cell = 1.5) {
 
 /* ---------------- Der Weg zum Tor ---------------- */
 
+/**
+ * Schnitt zweier Strecken, als Laufparameter auf der ERSTEN.
+ * Gebraucht wird nur, wie weit man auf ihr laufen muss - null, wenn sie sich
+ * innerhalb ihrer Laenge nicht treffen.
+ */
+function strahlSchnitt(ax, az, bx, bz, cx, cz, dx, dz) {
+  const rx = bx - ax, rz = bz - az;
+  const sx = dx - cx, sz = dz - cz;
+  const n = rx * sz - rz * sx;
+  if (Math.abs(n) < 1e-12) return null;
+  const t = ((cx - ax) * sz - (cz - az) * sx) / n;
+  const u = ((cx - ax) * rz - (cz - az) * rx) / n;
+  if (t < 0 || t > 1 || u < 0 || u > 1) return null;
+  return t;
+}
+
+
 // Wie weit der Weg ueber die Gartengrenze hinaus nach draussen laeuft.
 const TOR_WEG_DRAUSSEN = 4.0;
 
@@ -996,23 +833,36 @@ export function torWeg(cfg, hf, paths, tor, index) {
   }
   if (!ziel) return null;
 
-  // Und dann genau: bis der Zugang um den Ueberstand unter der Flaeche liegt.
-  // Frueher blieb es beim Vierteilmeterraster, und weil der Zugang zudem nie
-  // schraeg angeschnitten wurde, stand seine Stirnkante an neun von 24
-  // Toren mit einer Ecke bis zu 16 cm im Gras.
-  const tief = eintrittSuchen(ziel, m.x, m.z, -ux, -uz, Math.min(r, grob + 2 * ziel.width));
-  if (tief === null) return null;
-  const innen = { x: m.x - ux * tief, z: m.z - uz * tief };
+  // ER ENDET AUF DER MITTELLINIE - NICHT DAHINTER.
+  //
+  // Hier lief er einmal ganz durch den Rundweg hindurch und wurde auf beiden
+  // Seiten geschnitten. Das war eine Seite zu viel: geschnitten wird nur an der
+  // Randlinie, die ihm ZUGEWANDT ist, und was dahinter liegt, faellt ohnehin
+  // weg. Bis zur Mittellinie zu laufen genuegt vollauf, damit seine beiden
+  // Randlinien diese eine Kante sauber kreuzen - und dort entstehen die
+  // gemeinsamen Punkte.
+  //
+  // Der Endpunkt wird jetzt gerechnet statt abgeschritten: der Strahl vom Tor
+  // zur Gartenmitte gegen die Mittellinie des getroffenen Weges, die erste
+  // Kreuzung von aussen gewinnt.
+  const sm = ziel.samples;
+  const segs = ziel.closed ? sm.length : sm.length - 1;
+  const ex = m.x - ux * r, ez = m.z - uz * r;
+  let dMitte = Infinity;
+  for (let i = 0; i < segs; i++) {
+    const a = sm[i], b = sm[(i + 1) % sm.length];
+    const t = strahlSchnitt(m.x, m.z, ex, ez, a.x, a.z, b.x, b.z);
+    if (t !== null && t * r < dMitte) dMitte = t * r;
+  }
+  // Trifft der Strahl die Mittellinie nicht (streifender Fall), bleibt es beim
+  // abgeschrittenen Punkt plus halber Breite - dann liegt das Ende sicher
+  // innerhalb der Flaeche.
+  if (!isFinite(dMitte)) dMitte = grob + ziel.width / 2;
+  const innen = { x: m.x - ux * dMitte, z: m.z - uz * dMitte };
 
   const aussenR = cfg.durchmesser / 2 + TOR_WEG_DRAUSSEN;
   const aussen = { x: ux * aussenR, z: uz * aussenR };
   const linie = resample([innen, aussen], cfg.wegSample, false);
   if (linie.total < cfg.wegBreite) return null;
-  const weg = makePath(linie.pts, linie.total, false, index, cfg, hf, 1, 'tor');
-  // Dasselbe Maul wie bei den Abkuerzungen - nur am INNEREN Ende, denn das
-  // aeussere laeuft in die Landschaft hinaus und stoesst an nichts.
-  if (weg.width <= ziel.width) {
-    weg.anschnitt = { start: maulAnpassen(ziel, weg, 0, 1), ende: { mitte: 0, spreiz: 0 } };
-  }
-  return weg;
+  return makePath(linie.pts, linie.total, false, index, cfg, hf, 1, 'tor');
 }
