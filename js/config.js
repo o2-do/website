@@ -73,6 +73,15 @@ export const SCHEMA = [
   { group: 'Felsen', key: 'felsVerzerrung', label: 'Verzerrung je Brocken', unit: '± %', type: 'range', min: 0, max: 50, step: 1, default: 20 },
   { group: 'Felsen', key: 'felsEinsinken', label: 'Im Boden versenkt', unit: '× Hoehe', type: 'range', min: 0, max: 0.9, step: 0.05, default: 0.5 },
   { group: 'Felsen', key: 'felsDetail', label: 'Felsaufloesung', unit: 'Subdivisions', type: 'range', min: 1, max: 3, step: 1, default: 2 },
+  // NEGATIV HEISST: IN DEN WEG HINEIN.
+  //
+  // Gemessen wird vom Umriss des gedrehten Brockens zur Wegkante. Bei null
+  // stoesst er genau an, darunter liegt er auf dem Belag - ein Findling, um den
+  // herum der Weg gebaut wurde. Der Schatten macht das mit: der Weg nimmt die
+  // eingebrannte Bodenkarte genauso an wie die Wiese, und beim gerechneten
+  // Schatten wirft der Fels ohnehin auf alles, was ihn empfaengt.
+  { group: 'Felsen', key: 'felsAbstandWegMin', label: 'Abstand zur Wegkante (min)', unit: 'm', type: 'range', min: -0.4, max: 4, step: 0.05, default: -0.2 },
+  { group: 'Felsen', key: 'felsAbstandWegMax', label: 'Abstand zur Wegkante (max)', unit: 'm', type: 'range', min: -0.4, max: 8, step: 0.05, default: 2.5 },
   { group: 'Felsen', key: 'kachelFels', label: 'Texturkachel Fels', unit: 'm', type: 'range', min: 0.2, max: 4, step: 0.1, default: 1.0 },
 
   // Ein Baum ist ein Holznetz und ein Laubnetz aus Rechtecken - zusammen ein
@@ -99,6 +108,12 @@ export const SCHEMA = [
   // (siehe `zaun.js`). Deshalb hat er keine eigenen Masse im Formular: seine
   // Gestalt steht schon unter „Wege".
   { group: 'Zaun', key: 'zaun', label: 'Zaun um den Garten', type: 'checkbox', default: true },
+  // Der Zaun laeuft nicht mehr rings um den Garten, sondern steht als kurzes
+  // Stueck beiderseits des Tors - die Grenze zieht seit jetzt der Bordstein.
+  // Gezaehlt wird in Feldern (Pfosten zu Pfosten), gerechnet ab der Torsaeule;
+  // beide Seiten enden mit einem Pfosten.
+  { group: 'Zaun', key: 'zaunFelder', label: 'Zaunfelder je Torseite', unit: 'à 2 m', type: 'range', min: 0, max: 40, step: 1, default: 5 },
+  { group: 'Zaun', key: 'bordstein', label: 'Bordstein um den Garten', type: 'checkbox', default: true },
 
   { group: 'Schilder', key: 'schriftGroesse', label: 'Schriftgroesse', unit: 'm', type: 'range', min: 0.04, max: 0.3, step: 0.005, default: 0.12 },
   { group: 'Schilder', key: 'schildRand', label: 'Rand um die Schrift', unit: 'm', type: 'range', min: 0.01, max: 0.2, step: 0.005, default: 0.05 },
@@ -134,6 +149,24 @@ export const SCHEMA = [
   { group: 'Pflanzen', key: 'anzahlBeete', label: 'Anzahl Beete', type: 'range', min: 0, max: 120, step: 1, default: 24 },
   { group: 'Pflanzen', key: 'beetAbstandMin', label: 'Abstand von der Wegkante (min)', unit: 'm', type: 'range', min: 0, max: 10, step: 0.1, default: 0.4 },
   { group: 'Pflanzen', key: 'beetAbstandMax', label: 'Abstand von der Wegkante (max)', unit: 'm', type: 'range', min: 0, max: 15, step: 0.1, default: 3 },
+
+  // Der Tuempel: eine Mulde in der Wiese und eine Scheibe darin. Der Platz
+  // wird gesucht, nicht gewuerfelt - unter vierhundert Kandidaten gewinnt der
+  // ebenste, denn ein Tuempel am Hang laeuft aus und man sieht es ihm an.
+  { group: 'Wasser', key: 'teichDurchmesser', label: 'Durchmesser des Tuempels', unit: 'm (0 = keiner)', type: 'range', min: 0, max: 20, step: 0.5, default: 5 },
+  // Was die Wasserflaeche kostet:
+  //   einfarbig   eine Flaeche in einer Farbe - so teuer wie jedes Dreieck
+  //   spiegel     die Szene wird je Bild ein zweites Mal gezeichnet (~0,24 ms)
+  { group: 'Wasser', key: 'wasserQualitaet', label: 'Spiegelung', type: 'select', options: ['einfarbig', 'spiegel'], default: 'spiegel' },
+  // Wie viel Wasserfarbe sich ueber das Spiegelbild legt. Null ist der reine
+  // Spiegel; wirkt sofort, ohne Neuaufbau.
+  { group: 'Wasser', key: 'wasserToenung', label: 'Toenung des Spiegels', unit: '%', type: 'range', min: 0, max: 100, step: 5, default: 0, live: true },
+
+  // Zypressen stehen zu dritt: zweimal die eine Vorlage, einmal die andere,
+  // im gleichseitigen Dreieck. Einzeln gesetzt saehen sie aus wie Pfosten.
+  { group: 'Zypressen', key: 'zypressenGruppen', label: 'Anzahl Gruppen', unit: 'à 3 Baeume', type: 'range', min: 0, max: 40, step: 1, default: 5 },
+  { group: 'Zypressen', key: 'zypressenAbstand', label: 'Abstand im Dreieck', unit: 'm', type: 'range', min: 0.5, max: 8, step: 0.25, default: 2 },
+  { group: 'Zypressen', key: 'zypressenAbstandWeg', label: 'Abstand zur Wegkante', unit: 'm', type: 'range', min: 0, max: 8, step: 0.25, default: 1.5 },
 
   { group: 'Waldhorizont', key: 'wald', label: 'Wald am Horizont', type: 'checkbox', default: true, live: true },
   { group: 'Waldhorizont', key: 'waldAbstand', label: 'Abstand von der Mitte', unit: '× Gartenradius', type: 'range', min: 1.1, max: 8, step: 0.1, default: 3, live: true },
@@ -205,6 +238,7 @@ export function normalize(cfg) {
   c.felsMax = Math.max(c.felsMin, c.felsMax);
   c.felsProHaufen = [c.felsProHaufenMin, c.felsProHaufenMax];
   c.beetAbstandMax = Math.max(c.beetAbstandMin, c.beetAbstandMax);
+  c.felsAbstandWegMax = Math.max(c.felsAbstandWegMin, c.felsAbstandWegMax);
   c.halmHoeheMax = Math.max(c.halmHoeheMin, c.halmHoeheMax);
 
   // Schildhoehe folgt der Schriftgroesse (kein Umbruch, feste Schrift), die
@@ -255,6 +289,5 @@ export function normalize(cfg) {
   // Beete liegen weiterhin AUF der Wiese: sie sind keine geschnittene Flaeche,
   // sondern ein eigenes kleines Gitter darueber. Ohne Absatz flackerten sie.
   c.beetHoehe = 0.02;
-  c.felsAbstandWeg = 0.8;   // Mindestabstand Fels zur Wegkante in m
   return c;
 }

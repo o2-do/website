@@ -199,24 +199,45 @@ const _dir = new THREE.Vector3();
 export function buildZaun(cfg, hf, textur, sektoren, tor) {
   const ecken = planZaun(cfg);
   if (!cfg.zaun || ecken.length < 3) return [];
+  if (tor && Math.round(cfg.zaunFelder) <= 0) {
+    const leer = [];
+    leer.stats = { pfosten: 0, quer: 0, umfang: 0, radius: +zaunRadius(cfg).toFixed(1) };
+    return leer;
+  }
 
   const n = ecken.length;
-  // Die Luecke fuers Tor: die Pfosten INNERHALB der Luecke fallen weg, die
-  // beiden an ihren Enden bleiben - dort stehen die Saeulen, und ohne sie
-  // haenge das letzte Querholz an nichts. Genauso fallen die Querhoelzer
-  // ueber die Luecke weg.
-  const wegPfosten = new Set();
-  const wegQuer = new Set();
+  // DER ZAUN LAEUFT NICHT MEHR RINGS HERUM.
+  //
+  // Er steht als kurzes Stueck beiderseits des Tors und hoert dann auf; die
+  // Grenze des Gartens zieht der Bordstein (siehe `buildBordstein`). Gezaehlt
+  // wird in Feldern - ein Feld ist die Spanne zwischen zwei Pfosten -, und
+  // beide Seiten enden mit einem Pfosten, nicht mit einem freien Querholz.
+  //
+  // Feld k spannt von Pfosten k zu Pfosten k+1. Links vom Tor sind das also
+  // die Felder i-1 bis i-`felder` mit den Pfosten i bis i-`felder`, rechts die
+  // Felder j bis j+`felder`-1 mit den Pfosten j bis j+`felder`, wobei j der
+  // Pfosten am anderen Ende der Torluecke ist. Auf den beiden Pfosten i und j
+  // stehen die Torsaeulen - der Zaun setzt das Tor fort, statt daneben zu
+  // beginnen.
+  const um = (k) => ((k % n) + n) % n;
+  const nimmPfosten = new Set();
+  const nimmQuer = new Set();
   if (tor) {
-    for (let k = 1; k < tor.luecke; k++) wegPfosten.add((tor.i + k) % n);
-    for (let k = 0; k < tor.luecke; k++) wegQuer.add((tor.i + k) % n);
+    const felder = Math.max(0, Math.round(cfg.zaunFelder));
+    const j = um(tor.i + tor.luecke);
+    for (let k = 0; k <= felder; k++) { nimmPfosten.add(um(tor.i - k)); nimmPfosten.add(um(j + k)); }
+    for (let k = 1; k <= felder; k++) nimmQuer.add(um(tor.i - k));
+    for (let k = 0; k < felder; k++) nimmQuer.add(um(j + k));
+  } else {
+    // Ohne Tor gibt es keinen Anfang - dann steht er wie frueher ringsum.
+    for (let i = 0; i < n; i++) { nimmPfosten.add(i); nimmQuer.add(i); }
   }
 
   const alle = ecken.map((p) => ({ x: p.x, y: hf.heightAt(p.x, p.z), z: p.z }));
-  const pfosten = alle.filter((_, i) => !wegPfosten.has(i));
+  const pfosten = alle.filter((_, i) => nimmPfosten.has(i));
   const quer = alle
     .map((a, i) => ({ a, b: alle[(i + 1) % n], i }))
-    .filter((q) => !wegQuer.has(q.i));
+    .filter((q) => nimmQuer.has(q.i));
 
   const material = new THREE.MeshStandardMaterial({
     map: textur, roughness: 0.9, metalness: 0,
@@ -279,6 +300,139 @@ export function buildZaun(cfg, hf, textur, sektoren, tor) {
     umfang: Math.round(quer.reduce(
       (a, q) => a + Math.hypot(q.b.x - q.a.x, q.b.z - q.a.z), 0)),
     radius: +zaunRadius(cfg).toFixed(1),
+  };
+  return meshes;
+}
+
+/* ---------------- Der Bordstein ---------------- */
+
+// Masse in Metern.
+const BORD_H = 0.04;              // was ueber dem Boden steht
+const BORD_B = 0.20;              // Breite der Krone
+// Wie tief die Wangen unter den Boden reichen. Die Kante folgt dem Gelaende nur
+// an ihren Stuetzstellen; zwischen zweien liegt sie gerade, das Gelaende nicht.
+// Ohne den Fuss klaffte auf einer Kuppe ein Spalt darunter.
+const BORD_FUSS = 0.15;
+// Kantenlaenge einer Texturkachel auf dem Stein, in Metern. BEWUSST NICHT die
+// Feldweite des Zauns: bei zwei Metern liefe die Maserung mit den Pfosten im
+// Gleichschritt, und aus zwei unauffaelligen Wiederholungen wuerde eine
+// auffaellige.
+const BORD_KACHEL = 1.5;
+
+/**
+ * DIE KANTE, DIE DEN GARTEN BEGRENZT.
+ *
+ * Sie laeuft auf demselben Ring wie der Zaun und mit denselben Ecken - der Zaun
+ * ist ja nur noch ein kurzes Stueck neben dem Tor, und die durchgehende Grenze
+ * ist jetzt diese. Angefangen wird an der einen Torsaeule, aufgehoert an der
+ * anderen; durch die Toroeffnung laeuft sie nicht, dort tritt man ueber sie
+ * hinweg in den Garten.
+ *
+ * DREI FLAECHEN, KEINE SEITEN: aussen hinauf, oben hinueber, innen hinunter.
+ * Enddeckel braucht sie keine - an beiden Enden steckt sie in einer Torsaeule,
+ * und was dort zu sehen waere, ist verdeckt.
+ *
+ * Die Krone liegt quer waagerecht, wie ein Weg: beide Wangen bekommen die
+ * Gelaendehoehe der Mittellinie. Anders herum stuende der Stein am Hang
+ * verkantet, und ein Bordstein ist gegossen, nicht gewachsen.
+ *
+ * DREI BAENDER, NICHT HUNDERTVIERUNDFUENFZIG STUECKE. Zuerst bekam jedes
+ * Zweimeterstueck seine eigenen acht Ecken; damit stiess an jeder Fuge eine
+ * eigene Normale auf die naechste, und die Kante zeigte alle zwei Meter einen
+ * Helligkeitssprung - eine Wiederholung im Takt der Zaunfelder, die wie ein
+ * Texturfehler aussah, aber keiner war. Jetzt teilen aufeinanderfolgende
+ * Stuecke ihre Ecken, LAENGS des Rings: die Beleuchtung laeuft glatt durch.
+ * Quer dagegen bleiben die drei Baender getrennt - sonst rundete die gemittelte
+ * Normale die Oberkante ab, und ein Bordstein hat dort eine Kante.
+ *
+ * Und alles in EINEM Netz: neunhundert Dreiecke sind nichts, und aufgeteilt
+ * kaeme an jeder Sektorgrenze wieder eine Fuge mit eigener Normale.
+ */
+export function buildBordstein(cfg, hf, textur, sektoren, tor) {
+  const ecken = planZaun(cfg);
+  if (!cfg.bordstein || ecken.length < 3) return [];
+  const n = ecken.length;
+
+  // Die Folge der Stuetzstellen: vom Pfosten hinter der Torluecke einmal herum
+  // bis zum Pfosten davor. Ohne Tor ist es der geschlossene Ring.
+  const folge = [];
+  if (tor) {
+    const start = (tor.i + tor.luecke) % n;
+    for (let k = 0; k <= n - tor.luecke; k++) folge.push(ecken[(start + k) % n]);
+  } else {
+    for (let k = 0; k <= n; k++) folge.push(ecken[k % n]);
+  }
+
+  // Je Stuetzstelle die vier Punkte des Profils - aussen unten, aussen oben,
+  // innen oben, innen unten - dazu die Bogenlaenge fuer die Kachelung.
+  const halb = BORD_B / 2;
+  const stellen = [];
+  let bogen = 0;
+  for (let k = 0; k < folge.length; k++) {
+    const p = folge[k];
+    if (k > 0) bogen += Math.hypot(p.x - folge[k - 1].x, p.z - folge[k - 1].z);
+    const r = Math.hypot(p.x, p.z) || 1;
+    const nx = p.x / r, nz = p.z / r;                   // nach aussen
+    const oben = hf.heightAt(p.x, p.z) + BORD_H;
+    const unten = oben - BORD_H - BORD_FUSS;
+    stellen.push({
+      bogen,
+      ax: p.x + nx * halb, az: p.z + nz * halb,         // aussen
+      ix: p.x - nx * halb, iz: p.z - nz * halb,         // innen
+      oben, unten,
+    });
+  }
+
+  // Die Lage auf dem Profil, als Weg quer ueber den Stein - daraus kommt die
+  // zweite Texturkoordinate. So laeuft die Maserung ueber die Oberkante hinweg
+  // weiter, statt an jeder Flaeche neu anzusetzen.
+  const hoch = BORD_H + BORD_FUSS;
+  const vAU = 0, vAO = hoch, vIO = hoch + BORD_B, vIU = 2 * hoch + BORD_B;
+
+  const pos = [], uv = [], idx = [];
+  const punkt = (x, y, z, u, v) => {
+    pos.push(x, y, z); uv.push(u / BORD_KACHEL, v / BORD_KACHEL);
+    return pos.length / 3 - 1;
+  };
+  /**
+   * Ein Band ueber alle Stuetzstellen. `kante` liefert je Stelle die beiden
+   * Punkte des Bandes; die Reihenfolge entscheidet, wohin es blickt.
+   */
+  const band = (kante) => {
+    let vor = null;
+    for (const st of stellen) {
+      const [p1, p2] = kante(st);
+      const jetzt = [punkt(p1[0], p1[1], p1[2], st.bogen, p1[3]),
+                     punkt(p2[0], p2[1], p2[2], st.bogen, p2[3])];
+      if (vor) idx.push(vor[0], vor[1], jetzt[1], vor[0], jetzt[1], jetzt[0]);
+      vor = jetzt;
+    }
+  };
+  // Aussenwange blickt nach aussen, Krone nach oben, Innenwange nach innen.
+  band((s) => [[s.ax, s.unten, s.az, vAU], [s.ax, s.oben, s.az, vAO]]);
+  band((s) => [[s.ax, s.oben, s.az, vAO], [s.ix, s.oben, s.iz, vIO]]);
+  band((s) => [[s.ix, s.oben, s.iz, vIO], [s.ix, s.unten, s.iz, vIU]]);
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  geo.computeBoundingSphere();
+
+  const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+    map: textur, roughness: 0.95, metalness: 0,
+    wireframe: cfg.drahtgitter,
+  }));
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  mesh.name = 'bordstein';
+
+  const meshes = [mesh];
+  meshes.stats = {
+    stuecke: stellen.length - 1,
+    laenge: Math.round(stellen[stellen.length - 1].bogen),
+    hoehe: BORD_H, breite: BORD_B, kachel: BORD_KACHEL,
   };
   return meshes;
 }

@@ -1547,12 +1547,14 @@ function bbVertex(instanziert){ return /* glsl */`
   }`; }
 
 function billboardMaterial(tex, instanziert){
-  return new THREE.RawShaderMaterial({
+  const m = new THREE.RawShaderMaterial({
     glslVersion: THREE.GLSL3,
     uniforms: {
       uKarte:   { value: tex },
       uFarbe:   { value: new THREE.Color(1, 1, 1) },
-      uSchnitt: { value: 0.5 }
+      uSchnitt: { value: 0.5 },
+      // Ob am Ende nach sRGB umgerechnet wird - siehe unten bei onBeforeRender.
+      uSRGB:    { value: 1 }
     },
     vertexShader: bbVertex(instanziert),
     fragmentShader: /* glsl */`
@@ -1561,6 +1563,7 @@ function billboardMaterial(tex, instanziert){
       uniform sampler2DArray uKarte;
       uniform vec3  uFarbe;
       uniform float uSchnitt;
+      uniform float uSRGB;
       in vec2  vUv;
       in float vSchicht;
       in float vLicht;
@@ -1597,7 +1600,9 @@ function billboardMaterial(tex, instanziert){
         // Gamma-Korrektur für die Ausgabe
         // lin *= vLicht * vLicht * vLicht * vLicht;
         lin *= vLicht;
-        ausgabe = vec4(pow(lin, vec3(1.0 / 2.2)), 1.0);
+        // NUR AUF DEN BILDSCHIRM WIRD UMGERECHNET, NICHT IN EIN RENDERZIEL.
+        // Warum, steht unten beim Aufruf onBeforeRender.
+        ausgabe = vec4(uSRGB > 0.5 ? pow(lin, vec3(1.0 / 2.2)) : lin, 1.0);
 /*
         vec3 ton = uFarbe * vTon;
         vec3 lin = pow(t.rgb, vec3(2.2));
@@ -1612,6 +1617,35 @@ function billboardMaterial(tex, instanziert){
     transparent: false,
     depthWrite: true
   });
+
+  // DAS MATERIAL FRAGT SELBST, WOHIN GEZEICHNET WIRD.
+  //
+  // Ein RawShaderMaterial bekommt von three nichts angehaengt - es gibt ein
+  // fertiges Bild ab, und deshalb rechnet der Fragmentshader oben selbst nach
+  // sRGB um. Auf den Bildschirm ist das richtig.
+  //
+  // In ein RENDERZIEL ist es falsch. Dorthin schreiben alle gewoehnlichen
+  // Materialien LINEAR - three haengt die Umrechnung nur an, wenn wirklich auf
+  // den Bildschirm gezeichnet wird. Ein Ziel, in dem die Krone schon in sRGB
+  // steht und alles andere linear, ist in sich widerspruechlich; wer es
+  // hinterher als Ganzes umrechnet - der Wasserspiegel tut das -, jagt das Laub
+  // ZWEIMAL durch die Kurve.
+  //
+  // Was das anrichtet, sieht man genau an der Kontrastspreizung im
+  // Vertexshader (`vLicht` hoch acht): ein dunkles Blatt bei linear 0,25 wird
+  // einmal umgerechnet zu 0,53 und ein zweites Mal zu 0,75, waehrend ein helles
+  // bei 1,0 stehen bleibt. Aus einem Verhaeltnis von 4:1 wird eines von 1,3:1 -
+  // die Krone verliert im Spiegelbild ihre Tiefe und wirkt ausgewaschen. Die
+  // Tafeln in der Ferne zeigten den Fehler nicht: sie sind ein gewoehnliches
+  // MeshBasicMaterial und werden von three richtig behandelt.
+  //
+  // three ruft `onBeforeRender` je Zeichenaufruf auf, und zwar VOR dem
+  // Hochladen der Uniformen. Das Material entscheidet also selbst und braucht
+  // von niemandem gesagt zu bekommen, dass gerade gespiegelt wird.
+  m.onBeforeRender = (renderer) => {
+    m.uniforms.uSRGB.value = renderer.getRenderTarget() === null ? 1 : 0;
+  };
+  return m;
 }
 
 // Tiefenmaterial für den Schattendurchgang. Ohne es rechnet three mit seinem

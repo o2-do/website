@@ -12,7 +12,19 @@
  * stehen (Schildpfahl 10 cm von der Kante, Randgras direkt an der Kante). Die
  * Rasterweite waere dort groesser als der geforderte Abstand; sie benutzen
  * weiterhin die exakte Abstandsabfrage des Weg-Index.
+ *
+ * WEGE STEHEN GETRENNT DARIN. Eine Zelle merkt sich, ob sie von einem Weg
+ * gesperrt ist oder von einem Ding, und `free` kann die Wege auf Wunsch
+ * uebergehen. Gebraucht wird das von den Felsen: ihr Abstand zur Wegkante darf
+ * negativ sein - ein Findling, um den herum der Weg gebaut wurde -, und ohne
+ * die Unterscheidung haette das Raster genau das verhindert, waehrend die
+ * exakte Abfrage es schon erlaubt hatte. Fuer alles andere aendert sich nichts:
+ * ohne das Kennzeichen sperrt ein Weg wie eh und je.
  */
+// Zellinhalt: 0 frei, 1 von einem Ding belegt, 2 von einem Weg.
+const DING = 1;
+const WEG = 2;
+
 export function createOccupancy(radius, cell = 0.15) {
   const n = Math.ceil((2 * radius) / cell) + 4;
   const grid = new Uint8Array(n * n);
@@ -43,18 +55,27 @@ export function createOccupancy(radius, cell = 0.15) {
     get blockedCells() { return blocked; },
     get cells() { return n * n; },
 
-    /** Kreisflaeche sperren. */
+    /** Kreisflaeche sperren - als Ding. Ein Weg darunter wird ueberschrieben. */
     block(x, z, r) {
-      forCircle(x, z, r, (k) => { if (!grid[k]) { grid[k] = 1; blocked++; } });
+      forCircle(x, z, r, (k) => {
+        if (!grid[k]) blocked++;
+        grid[k] = DING;
+      });
+    },
+
+    /** Dasselbe, aber als WEG gekennzeichnet - ein Ding behaelt Vorrang. */
+    blockWeg(x, z, r) {
+      forCircle(x, z, r, (k) => { if (!grid[k]) { grid[k] = WEG; blocked++; } });
     },
 
     /** Kapsel entlang einer Strecke sperren (fuer Wegbaender). */
-    blockSegment(ax, az, bx, bz, r) {
+    blockSegment(ax, az, bx, bz, r, alsWeg = false) {
       const len = Math.hypot(bx - ax, bz - az);
       const steps = Math.max(1, Math.ceil(len / (cell * 0.8)));
       for (let s = 0; s <= steps; s++) {
         const t = s / steps;
-        this.block(ax + (bx - ax) * t, az + (bz - az) * t, r);
+        if (alsWeg) this.blockWeg(ax + (bx - ax) * t, az + (bz - az) * t, r);
+        else this.block(ax + (bx - ax) * t, az + (bz - az) * t, r);
       }
     },
 
@@ -62,9 +83,13 @@ export function createOccupancy(radius, cell = 0.15) {
      * true, wenn im Umkreis r keine gesperrte Zelle liegt.
      * Der Zuschlag einer halben Zelldiagonale macht die Abfrage konservativ:
      * lieber einmal zu viel ablehnen als Objekte ineinander stellen.
+     *
+     * `ohneWege` uebergeht die Zellen, die nur ein Weg belegt - wer das setzt,
+     * hat eine eigene, genauere Abfrage gegen die Wegflaeche.
      */
-    free(x, z, r) {
-      return forCircle(x, z, r + diag, (k) => (grid[k] ? false : undefined));
+    free(x, z, r, ohneWege = false) {
+      const sperrt = ohneWege ? (v) => v === DING : (v) => v !== 0;
+      return forCircle(x, z, r + diag, (k) => (sperrt(grid[k]) ? false : undefined));
     },
   };
 }

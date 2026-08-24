@@ -251,6 +251,9 @@ function applyLive() {
   const cfg = readForm();
   viewer.setFog(cfg.nebel);
   viewer.setBlickwinkel(cfg.blickwinkel);
+  if (garden && garden.wasser && garden.wasser.userData.setzeToenung) {
+    garden.wasser.userData.setzeToenung(cfg.wasserToenung / 100);
+  }
   viewer.setSchattenAufloesung(cfg.schattenAufloesung);
   grasWeite = cfg.grasWeite;
   schattenAnwenden(cfg);
@@ -586,6 +589,8 @@ document.getElementById('btn-bird').addEventListener('click', (e) => {
 
 /* ---------------- Frame ---------------- */
 
+let wasserZeit = 0;
+
 viewer.onFrame((dt) => {
   walker.update(dt);
   // Nah und fern: was jenseits der Grenze steht, wird zur Tafel. Nur in
@@ -594,6 +599,12 @@ viewer.onFrame((dt) => {
     garden.bestand.aktualisiere(viewer.camera, viewer.isBird());
     // Halme jenseits der Sichtweite: je Sektor, nicht je Halm (siehe grass.js).
     aktualisiereGrasSicht(garden.grasNetze, viewer.camera, grasWeite, viewer.isBird());
+    // Die Wellen laufen ueber die Zeit, nicht ueber die Bildzahl - sonst
+    // liefen sie auf einem schnellen Rechner schneller.
+    if (garden.wasser && garden.wasser.userData.tick) {
+      wasserZeit += dt;
+      garden.wasser.userData.tick(wasserZeit);
+    }
   }
   const pose = walker.pose;
   updateMarks(

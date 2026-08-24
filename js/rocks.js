@@ -116,7 +116,7 @@ export function planRocks(hf, cfg, geometries, pathIndex, occ) {
       const rr = 0.9 * R * Math.sqrt(rng());
       const aa = rng() * Math.PI * 2;
       cx = Math.cos(aa) * rr; cz = Math.sin(aa) * rr;
-      ok = frei(cx, cz) > cfg.felsAbstandWeg + 1.5;
+      ok = frei(cx, cz) > cfg.felsAbstandWegMin + 1.5;
     }
     if (!ok) continue;
 
@@ -140,12 +140,27 @@ export function planRocks(hf, cfg, geometries, pathIndex, occ) {
       );
       randomQuaternion(rng, q);
 
+      // JEDER BROCKEN WUERFELT SEINEN EIGENEN ABSTAND. Ein fester Wert reihte
+      // sie alle in gleichem Abstand am Weg auf, als waeren sie gesetzt; mit
+      // einer Spanne liegt einer auf dem Belag, der naechste einen Meter
+      // daneben, und dazwischen ist alles moeglich.
+      const abstand = rand(rng, cfg.felsAbstandWegMin, cfg.felsAbstandWegMax);
+
       const arr = geometries[typeIndex].attributes.position.array;
       const ext = extents(arr, q, sc);
-      // Exakter Umriss des gedrehten Brockens gegen die befestigte Flaeche ...
-      if (frei(x, z) < ext.radXZ + cfg.felsAbstandWeg) continue;
-      // ... und gegen alles bereits Platzierte (Wege, Baumstaemme).
-      if (occ && !occ.free(x, z, ext.radXZ)) continue;
+      // Exakter Umriss des gedrehten Brockens gegen die befestigte Flaeche.
+      // Ist der gewuerfelte Abstand negativ, darf der Brocken so weit in den
+      // Belag hineinragen - ein Findling, um den herum der Weg gebaut wurde.
+      if (frei(x, z) < ext.radXZ + abstand) continue;
+      // ... und gegen alles bereits Platzierte - Baumstaemme, Zypressen.
+      //
+      // Die WEGE werden dabei uebergangen, sobald ein negativer Abstand
+      // eingestellt ist: sonst haette das Belegungsraster gerade das
+      // verhindert, was die exakte Abfrage eine Zeile darueber schon erlaubt
+      // hat. Es sperrt in Zellen von einigen Zentimetern und kennt keine
+      // Bruchteile davon - fuer „ein bisschen auf dem Belag" ist es das
+      // falsche Werkzeug.
+      if (occ && !occ.free(x, z, ext.radXZ, abstand < 0)) continue;
 
       const hoehe = ext.max - ext.min;
       // Unterkante auf den Boden, dann um den eingestellten Anteil versenken

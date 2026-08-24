@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { bandPunkt, WEG_RANG } from './paths.js';
 import { triangulate } from './cdt.js';
+import { hebeAus, teichPunkte, imTeichfeld } from './wasser.js';
 
 /**
  * Der Punktsatz des Gartens - erst die Ebene, dann die Höhe.
@@ -678,7 +679,7 @@ export function randPunkte(P, cfg) {
  * die Entscheidung dann am Rundungsfehler haengt. Der Ring selbst bleibt
  * unverwackelt - er ist Zwangskante und muss rund bleiben.
  */
-export function innenPunkte(P, paths, cfg, rng, rand) {
+export function innenPunkte(P, paths, cfg, rng, rand, teich = null) {
   const { seg, step, R } = rand;
   const abstand = step * 0.4;
   const wackel = step * 0.22;
@@ -689,6 +690,9 @@ export function innenPunkte(P, paths, cfg, rng, rand) {
       const x = -R + i * step + (rng() - 0.5) * 2 * wackel;
       const z = -R + j * step + (rng() - 0.5) * 2 * wackel;
       if (Math.hypot(x, z) > innen) continue;
+      // Der Tuempel bringt sein eigenes, feineres Raster mit - hier waeren die
+      // groben Punkte nur im Weg und ergaeben Splitter dazwischen.
+      if (imTeichfeld(teich, x, z)) continue;
       let frei = true;
       for (const p of paths) if (aufWeg(p, x, z) < abstand) { frei = false; break; }
       if (!frei) continue;
@@ -1004,7 +1008,7 @@ export function boeschung(P, wege, cfg, base) {
  * Die ganze Kette auf einmal: Punkte sammeln, schneiden, Raster streuen,
  * triangulieren, zuordnen, Hoehen setzen.
  */
-export function baueGartennetz(paths, cfg, base, rng) {
+export function baueGartennetz(paths, cfg, base, rng, teich = null) {
   const { P, wege } = sammleWegpunkte(paths, cfg);
   const rand = randPunkte(P, cfg);
 
@@ -1024,7 +1028,8 @@ export function baueGartennetz(paths, cfg, base, rng) {
   // Der Anlauf ERST JETZT: er braucht die Kreuzungspunkte, und er braucht die
   // schon gekuerzten Mittellinien, weil er in Bogenlaengen rechnet.
   neigeAnschluesse(P, wege, cfg);
-  innenPunkte(P, paths, cfg, rng, rand);
+  innenPunkte(P, paths, cfg, rng, rand, teich);
+  teichPunkte(P, teich, rng, RASTER);
 
   // EIN PUNKT IN EINER WEGFLAECHE GEHOERT ZU IHR ODER GAR NICHT.
   //
@@ -1103,6 +1108,11 @@ export function baueGartennetz(paths, cfg, base, rng) {
   // Boeschung ausrichtet. Dass die Triangulierung schon gelaufen ist, stoert
   // nicht: sie ist reine Ebene, und hier wird nur senkrecht verschoben.
   boeschung(P, wege, cfg, base);
+  // Und zuletzt das Becken ausheben. Nach der Boeschung, weil beide dieselben
+  // Punkte verschieben und der Tuempel abseits der Wege liegt - sie kommen
+  // sich also nicht in die Quere, aber die Reihenfolge soll trotzdem
+  // feststehen.
+  hebeAus(P, teich, RASTER);
   return { P, wege, wiese, baender, seg: rand.seg };
 }
 

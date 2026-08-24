@@ -20,7 +20,9 @@ import {
   buildBedFloors, stempelPflanzenschatten,
 } from './plants.js';
 import { createSektoren } from './sektoren.js';
-import { buildZaun, buildTor, planTor } from './zaun.js';
+import { buildZaun, buildTor, buildBordstein, planTor } from './zaun.js';
+import { ladeZypressen, planZypressen, baueZypressen, stempelZypressenschatten } from './zypressen.js';
+import { planeTeich, baueWasser } from './wasser.js';
 import {
   createBladeGeometry, planEdgeGrass, planPatchGrass, planTrunkGrass, buildGrassMeshes,
 } from './grass.js';
@@ -167,7 +169,11 @@ export async function buildGarden(cfg, tex, onProgress = () => {}) {
   // weder eine Fuge aufgehen noch eines durch das andere stossen. Die ganze
   // frueher noetige Kette - Weg anheben, Ausgleichswall, Ueberstand, Untergriff,
   // Saum - ist damit hinfaellig.
-  const netz = baueGartennetz(paths, cfg, base, stream(cfg._seed, 'wiese'));
+  // DER TUEMPEL WIRD VOR DEM NETZ GEPLANT, nicht danach: sein Becken ist keine
+  // eigene Geometrie, sondern eine Senkung derselben Wiesenpunkte, und die
+  // muss beim Bauen des Netzes schon bekannt sein.
+  const teich = planeTeich(base, cfg, paths);
+  const netz = baueGartennetz(paths, cfg, base, stream(cfg._seed, 'wiese'), teich);
   const alleDreiecke = netz.wiese.concat(...netz.baender);
   const hf = hoehenfeldAusNetz(netz.P, alleDreiecke, base, cfg);
 
@@ -188,9 +194,15 @@ export async function buildGarden(cfg, tex, onProgress = () => {}) {
     const halfW = p.width / 2;
     for (let i = 0; i < segs; i++) {
       const a = sm[i], b = sm[(i + 1) % sm.length];
-      occ.blockSegment(a.x, a.z, b.x, b.z, halfW);
+      // Als WEG gekennzeichnet: die Felsen duerfen diese Zellen uebergehen,
+      // wenn ihr eingestellter Abstand zur Wegkante negativ ist.
+      occ.blockSegment(a.x, a.z, b.x, b.z, halfW, true);
     }
   }
+
+  // Der Tuempel sperrt seinen Platz, bevor Baeume, Felsen und Gras kommen -
+  // samt Ufer, damit nichts halb im Wasser steht.
+  if (teich) occ.block(teich.x, teich.z, teich.rScheibe);
 
   stats.wege = paths.length;
   stats.abkuerzungen = paths.filter((p) => !p.closed).length;
@@ -239,6 +251,16 @@ export async function buildGarden(cfg, tex, onProgress = () => {}) {
   stats.blaetter = bestand.stats.billboards;
   stats.laubvarianten = bestand.stats.laubvarianten || 1;
   phase('baeume');
+  await nextFrame();
+  tPhase = performance.now();
+
+  onProgress('Zypressen …');
+  const zypSorten = await ladeZypressen(tex.zypresse);
+  const zypressen = planZypressen(hf, cfg, pathIndex, occ, zypSorten);
+  for (const m of baueZypressen(zypressen, zypSorten, sektoren)) group.add(m);
+  stats.zypressen = zypressen.length;
+  stats.zypressenGruppen = zypressen.length / 3;
+  phase('zypressen');
   await nextFrame();
   tPhase = performance.now();
 
@@ -301,6 +323,7 @@ export async function buildGarden(cfg, tex, onProgress = () => {}) {
   // stempeln. Die Karte wird danach noch einmal gezeichnet - die Baeume haben
   // sie beim Aufbau des Bestandes schon einmal gefuellt.
   stats.pflanzenschatten = stempelPflanzenschatten(bodenkarte, beetPlan.stellen, modelle);
+  stempelZypressenschatten(bodenkarte, zypressen, zypSorten);
   bodenkarte.zeichne();
 
   stats.pflanzen = pAnzahl;
@@ -320,6 +343,11 @@ export async function buildGarden(cfg, tex, onProgress = () => {}) {
   // doppelt. Der Garten endet dort ohnehin sichtbar.
   for (const m of zaun) { m.userData.nurAugenhoehe = true; group.add(m); }
   stats.zaun = zaun.stats || { pfosten: 0, quer: 0, umfang: 0, radius: 0 };
+  // Der Bordstein ebenso: vier Zentimeter hoch, in der Aufsicht also nichts als
+  // eine Linie auf der Kante, die der runde Ausschnitt schon zieht.
+  const bord = buildBordstein(cfg, hf, tex.bordstein, sektoren, tor);
+  for (const m of bord) { m.userData.nurAugenhoehe = true; group.add(m); }
+  stats.bordstein = bord.stats || null;
   // Das Tor bleibt in der Karte sichtbar: es ist der Zugang und damit eine
   // Angabe zur Anlage, nicht zur Bepflanzung.
   for (const m of buildTor(cfg, hf, tex.pfosten, tor)) group.add(m);
@@ -351,6 +379,29 @@ export async function buildGarden(cfg, tex, onProgress = () => {}) {
   await nextFrame();
   tPhase = performance.now();
 
+  onProgress('Wasser …');
+  const wasser = baueWasser(teich, cfg, tex.wellen, cfg.wasserQualitaet);
+  if (wasser) {
+    if (wasser.userData.setzeToenung) wasser.userData.setzeToenung(cfg.wasserToenung / 100);
+    // WAS NICHT GESPIEGELT WIRD. Das Gras ist der mit Abstand groesste Posten
+    // der Szene und im Spiegelbild ohnehin nur eine gruene Flaeche; die Halme
+    // einzeln zu spiegeln waere der teuerste Weg zu genau diesem Ergebnis.
+    // Ebenso die Kartengrafik, die in Augenhoehe gar nicht sichtbar ist.
+    if (wasser.userData.nichtSpiegeln) {
+      wasser.userData.nichtSpiegeln.push(...grasNetze);
+    }
+    group.add(wasser);
+  }
+  stats.teich = teich
+    ? { x: +teich.x.toFixed(1), z: +teich.z.toFixed(1),
+        becken: +(teich.rBecken * 2).toFixed(1),
+        spiegel: +teich.spiegel.toFixed(2),
+        tiefe: +(teich.spiegel - teich.grund).toFixed(2),
+        unebenheit: +teich.spanne.toFixed(3),
+        art: cfg.wasserQualitaet }
+    : null;
+  phase('wasser');
+
   stats.rasterBelegt = Math.round((occ.blockedCells / occ.cells) * 100);
 
   group.traverse((o) => {
@@ -370,7 +421,7 @@ export async function buildGarden(cfg, tex, onProgress = () => {}) {
 
   return {
     group, hf, paths, pathIndex, trunks, occ, bestand, bodenkarte, sektoren,
-    grasNetze, tor,
+    grasNetze, tor, wasser, teich,
     signs: signMeshes.faces, signPlan: signs, stats,
   };
 }
@@ -386,6 +437,7 @@ export function disposeGarden(group) {
       if (o.isInstancedMesh && !o.userData.instanzGeteilt) o.dispose();
       return;
     }
+    if (o.userData && o.userData.dispose) o.userData.dispose();
     if (o.geometry) o.geometry.dispose();
     if (o.material) {
       const mats = Array.isArray(o.material) ? o.material : [o.material];
