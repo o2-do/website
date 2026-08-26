@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { bandPunkt } from './paths.js';
 
 /**
  * Der Zaun um den Garten: ein Kreis, ein halbes Meter innerhalb der Kante.
@@ -22,6 +23,11 @@ const PFOSTEN_D = 0.10;          // Durchmesser Pfosten wie Querholz
 const PFOSTEN_H = 1.00;          // Hoehe ueber Grund
 const QUER_LAENGE = 2.00;        // Sollabstand zweier Pfosten
 const QUER_HOEHEN = [0.45, 0.95];
+// Wie tief jeder Pfosten unter den Boden reicht. Er steht auf einer Flaeche,
+// die zwischen zwei Stuetzstellen gerade laeuft, das Gelaende aber nicht - und
+// am Gelaender kommt hinzu, dass er auf WEGHOEHE gesetzt wird, waehrend es
+// neben ihm steil abfaellt. Ohne den Fuss stuende er dort in der Luft.
+const PFOSTEN_EIN = 0.20;
 const SEITEN = 10;               // Umfangssegmente der Zylinder
 // Kantenlaenge einer Texturkachel auf dem Holz. Die UVs werden beim Bauen
 // darauf umgerechnet, damit Pfosten und Querholz dieselbe Maserung zeigen -
@@ -152,10 +158,17 @@ function naechsterWegpunkt(paths, p) {
   return best ? { x: best.x, z: best.z, tx: best.tx, tz: best.tz, d: bestD } : null;
 }
 
-/** Ein Zylinder mit Achse +Y, Fuss bei y = 0, und Texturkacheln in Metern. */
-function pfostenGeometrie(laenge) {
+/**
+ * Ein Zylinder mit Achse +Y und Texturkacheln in Metern.
+ *
+ * `unten` sagt, wie weit er unter den Ansatzpunkt reicht - der Fuss liegt dann
+ * bei y = -unten, die Oberkante bei y = laenge - unten. Damit bleibt der
+ * Ansatzpunkt die BODENHOEHE und nicht die Unterkante: wer den Pfosten setzt,
+ * rechnet in sichtbarer Hoehe weiter, gleichgueltig wie tief er steckt.
+ */
+function pfostenGeometrie(laenge, unten = 0) {
   const g = new THREE.CylinderGeometry(PFOSTEN_D / 2, PFOSTEN_D / 2, laenge, SEITEN, 1);
-  g.translate(0, laenge / 2, 0);
+  g.translate(0, laenge / 2 - unten, 0);
   kachle(g, Math.PI * PFOSTEN_D, laenge);
   return g;
 }
@@ -199,51 +212,30 @@ const _dir = new THREE.Vector3();
 export function buildZaun(cfg, hf, textur, sektoren, tor) {
   const ecken = planZaun(cfg);
   if (!cfg.zaun || ecken.length < 3) return [];
-  if (tor && Math.round(cfg.zaunFelder) <= 0) {
-    const leer = [];
-    leer.stats = { pfosten: 0, quer: 0, umfang: 0, radius: +zaunRadius(cfg).toFixed(1) };
-    return leer;
-  }
 
   const n = ecken.length;
-  // DER ZAUN LAEUFT NICHT MEHR RINGS HERUM.
-  //
-  // Er steht als kurzes Stueck beiderseits des Tors und hoert dann auf; die
-  // Grenze des Gartens zieht der Bordstein (siehe `buildBordstein`). Gezaehlt
-  // wird in Feldern - ein Feld ist die Spanne zwischen zwei Pfosten -, und
-  // beide Seiten enden mit einem Pfosten, nicht mit einem freien Querholz.
-  //
-  // Feld k spannt von Pfosten k zu Pfosten k+1. Links vom Tor sind das also
-  // die Felder i-1 bis i-`felder` mit den Pfosten i bis i-`felder`, rechts die
-  // Felder j bis j+`felder`-1 mit den Pfosten j bis j+`felder`, wobei j der
-  // Pfosten am anderen Ende der Torluecke ist. Auf den beiden Pfosten i und j
-  // stehen die Torsaeulen - der Zaun setzt das Tor fort, statt daneben zu
-  // beginnen.
-  const um = (k) => ((k % n) + n) % n;
-  const nimmPfosten = new Set();
-  const nimmQuer = new Set();
+  // Die Luecke fuers Tor: die Pfosten INNERHALB der Luecke fallen weg, die
+  // beiden an ihren Enden bleiben - dort stehen die Saeulen, und ohne sie
+  // haenge das letzte Querholz an nichts. Genauso fallen die Querhoelzer
+  // ueber die Luecke weg. Sonst laeuft der Zaun rings um den Garten.
+  const wegPfosten = new Set();
+  const wegQuer = new Set();
   if (tor) {
-    const felder = Math.max(0, Math.round(cfg.zaunFelder));
-    const j = um(tor.i + tor.luecke);
-    for (let k = 0; k <= felder; k++) { nimmPfosten.add(um(tor.i - k)); nimmPfosten.add(um(j + k)); }
-    for (let k = 1; k <= felder; k++) nimmQuer.add(um(tor.i - k));
-    for (let k = 0; k < felder; k++) nimmQuer.add(um(j + k));
-  } else {
-    // Ohne Tor gibt es keinen Anfang - dann steht er wie frueher ringsum.
-    for (let i = 0; i < n; i++) { nimmPfosten.add(i); nimmQuer.add(i); }
+    for (let k = 1; k < tor.luecke; k++) wegPfosten.add((tor.i + k) % n);
+    for (let k = 0; k < tor.luecke; k++) wegQuer.add((tor.i + k) % n);
   }
 
   const alle = ecken.map((p) => ({ x: p.x, y: hf.heightAt(p.x, p.z), z: p.z }));
-  const pfosten = alle.filter((_, i) => nimmPfosten.has(i));
+  const pfosten = alle.filter((_, i) => !wegPfosten.has(i));
   const quer = alle
     .map((a, i) => ({ a, b: alle[(i + 1) % n], i }))
-    .filter((q) => nimmQuer.has(q.i));
+    .filter((q) => !wegQuer.has(q.i));
 
   const material = new THREE.MeshStandardMaterial({
     map: textur, roughness: 0.9, metalness: 0,
     wireframe: cfg.drahtgitter,
   });
-  const pGeo = pfostenGeometrie(PFOSTEN_H);
+  const pGeo = pfostenGeometrie(PFOSTEN_H + PFOSTEN_EIN, PFOSTEN_EIN);
   const qGeo = querGeometrie();
 
   const meshes = [];
@@ -304,114 +296,245 @@ export function buildZaun(cfg, hf, textur, sektoren, tor) {
   return meshes;
 }
 
-/* ---------------- Der Bordstein ---------------- */
+/* ---------------- Gelaender an steilen Wegen ---------------- */
+
+// Wie weit die Pfostenmitte neben der Wegkante steht.
+const GELAENDER_AB_KANTE = 0.05;
+// Wo das Gefaelle gemessen wird, gerechnet ab der Wegkante. Zwei Abstaende,
+// und der steilere gewinnt: dicht an der Kante hat die Boeschung den Absatz
+// schon abgefangen (siehe `boeschung` in `wegnetz.js`), erst dahinter zeigt
+// sich, ob es wirklich hinuntergeht.
+const GELAENDER_PROBEN = [1.2, 2.4];
+// Ein einzelner steiler Punkt ist noch keine Absturzkante. Erst so viele
+// Stuetzstellen hintereinander ergeben ein Gelaender - bei einem halben Meter
+// Abtastschritt sind das gut zwei Meter.
+const GELAENDER_MIN = 5;
+
+/**
+ * WO ES NEBEN DEM WEG HINUNTERGEHT.
+ *
+ * Der Zaun am Gartenrand ist eine Grenze; hier ist derselbe Zaun ein Gelaender,
+ * und das ist etwas anderes: es steht nicht dort, wo das Grundstueck aufhoert,
+ * sondern dort, wo man fallen koennte. Solche Stellen liegen fast immer am
+ * Rand des Gartens - dort laeuft das Gelaende zur Horizontscheibe hin aus, und
+ * neben einem Weg, der nah daran vorbeifuehrt, bleibt kein Platz mehr fuer eine
+ * Boeschung.
+ *
+ * Gesucht wird je Stuetzstelle und Seite, gemessen wird das Gefaelle vom
+ * Wegrand nach aussen. Was zusammenhaengt, wird zu einem Lauf gebuendelt -
+ * einzelne steile Punkte ergeben kein Gelaender, sondern Zaunstummel.
+ *
+ * Zurueck kommen Laeufe von Pfostenplaetzen; jeder Platz traegt die Hoehe der
+ * WEGKANTE und nicht die des Bodens neben ihm. Ein Gelaender folgt dem Weg,
+ * nicht dem Abhang.
+ */
+export function planeGelaender(paths, hf, cfg) {
+  if (!cfg.gelaender) return [];
+  const grenze = Math.tan((cfg.gelaenderAb * Math.PI) / 180);
+  const laeufe = [];
+
+  for (const p of paths) {
+    const sm = p.samples;
+    const halb = p.width / 2;
+    for (const sgn of [-1, 1]) {
+      let lauf = [];
+      const schliesse = () => {
+        if (lauf.length >= GELAENDER_MIN) laeufe.push(lauf);
+        lauf = [];
+      };
+      for (let k = 0; k < sm.length; k++) {
+        const c = sm[k];
+        // Die Wegkante liegt auf der Hoehe der Mittellinie - der Querschnitt
+        // ist waagerecht, das ist das Prinzip des ganzen Netzes.
+        const yKante = hf.heightAt(c.x, c.z);
+        let gefaelle = 0;
+        for (const d of GELAENDER_PROBEN) {
+          const px = c.x + c.nx * sgn * (halb + d);
+          const pz = c.z + c.nz * sgn * (halb + d);
+          gefaelle = Math.max(gefaelle, (yKante - hf.heightAt(px, pz)) / d);
+        }
+        if (gefaelle < grenze) { schliesse(); continue; }
+        const a = bandPunkt(p, k, sgn, halb + GELAENDER_AB_KANTE, 0);
+        lauf.push({ x: a.x, y: yKante, z: a.z });
+      }
+      schliesse();
+    }
+  }
+  return laeufe;
+}
+
+/**
+ * Die Laeufe zu Pfosten und Querhoelzern machen.
+ *
+ * Die Stuetzstellen stehen einen halben Meter auseinander, ein Zaunfeld ist
+ * zwei Meter - es wird also jede vierte genommen, und das letzte Feld darf
+ * kuerzer ausfallen. Ein Gelaender endet dort, wo der Abhang endet, und nicht
+ * dort, wo das Raster gerade passt.
+ *
+ * OHNE RUECKSICHT AUF DAS UEBRIGE. Es steht, wo es hingehoert; ob dort schon
+ * ein Grasbueschel oder ein Fels steht, ist ihm gleich. Ein Gelaender, das an
+ * einer Absturzkante aussetzt, weil zufaellig ein Stein im Weg lag, waere die
+ * schlechtere Loesung.
+ */
+export function buildGelaender(laeufe, cfg, textur, sektoren) {
+  if (!laeufe.length) return [];
+  const material = new THREE.MeshStandardMaterial({
+    map: textur, roughness: 0.9, metalness: 0,
+    wireframe: cfg.drahtgitter,
+  });
+  const pGeo = pfostenGeometrie(PFOSTEN_H + PFOSTEN_EIN, PFOSTEN_EIN);
+  const qGeo = querGeometrie();
+
+  const pfosten = [];
+  const quer = [];
+  for (const lauf of laeufe) {
+    // Jede vierte Stuetzstelle, das Ende immer.
+    const stellen = [];
+    for (let k = 0; k < lauf.length; k += 4) stellen.push(lauf[k]);
+    const letzt = lauf[lauf.length - 1];
+    const vorher = stellen[stellen.length - 1];
+    if (Math.hypot(letzt.x - vorher.x, letzt.z - vorher.z) > 0.6) stellen.push(letzt);
+    else stellen[stellen.length - 1] = letzt;
+    if (stellen.length < 2) continue;
+    pfosten.push(...stellen);
+    for (let k = 0; k + 1 < stellen.length; k++) {
+      const a = stellen[k], b = stellen[k + 1];
+      quer.push({ a, b, x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 });
+    }
+  }
+  if (!pfosten.length) return [];
+
+  const meshes = [];
+  for (const [feld, teil] of sektoren.teile(pfosten)) {
+    const netz = new THREE.InstancedMesh(pGeo, material, teil.length);
+    netz.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+    _quat.identity();
+    _skal.set(1, 1, 1);
+    teil.forEach((p, i) => netz.setMatrixAt(i, _m.compose(_pos.set(p.x, p.y, p.z), _quat, _skal)));
+    netz.instanceMatrix.needsUpdate = true;
+    netz.computeBoundingSphere();
+    netz.castShadow = true;
+    netz.receiveShadow = true;
+    netz.name = `gelaenderpfosten_${feld}`;
+    meshes.push(netz);
+  }
+  for (const [feld, teil] of sektoren.teile(quer)) {
+    const netz = new THREE.InstancedMesh(qGeo, material, teil.length * QUER_HOEHEN.length);
+    netz.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+    let i = 0;
+    for (const e of teil) {
+      for (const hoehe of QUER_HOEHEN) {
+        const ax = e.a.x, ay = e.a.y + hoehe, az = e.a.z;
+        const bx = e.b.x, by = e.b.y + hoehe, bz = e.b.z;
+        _dir.set(bx - ax, by - ay, bz - az);
+        const l = _dir.length();
+        _quat.setFromUnitVectors(_achse, _dir.divideScalar(l || 1));
+        netz.setMatrixAt(i++, _m.compose(
+          _pos.set((ax + bx) / 2, (ay + by) / 2, (az + bz) / 2), _quat, _skal.set(l, 1, 1)));
+      }
+    }
+    netz.instanceMatrix.needsUpdate = true;
+    netz.computeBoundingSphere();
+    netz.castShadow = true;
+    netz.receiveShadow = true;
+    netz.name = `gelaenderquer_${feld}`;
+    meshes.push(netz);
+  }
+  meshes.stats = {
+    laeufe: laeufe.length, pfosten: pfosten.length,
+    quer: quer.length * QUER_HOEHEN.length,
+    laenge: Math.round(quer.reduce((a, q) => a + Math.hypot(q.b.x - q.a.x, q.b.z - q.a.z), 0)),
+  };
+  return meshes;
+}
+
+/* ---------------- Die Schwelle im Tor ---------------- */
 
 // Masse in Metern.
-const BORD_H = 0.04;              // was ueber dem Boden steht
-const BORD_B = 0.20;              // Breite der Krone
-// Wie tief die Wangen unter den Boden reichen. Die Kante folgt dem Gelaende nur
-// an ihren Stuetzstellen; zwischen zweien liegt sie gerade, das Gelaende nicht.
-// Ohne den Fuss klaffte auf einer Kuppe ein Spalt darunter.
+const BORD_H = 0.02;              // was ueber dem Boden steht
+const BORD_B = 0.15;              // Breite quer zum Durchgang
+// Wie tief die Wangen unter den Boden reichen. Zwischen den beiden Saeulen
+// liegt die Schwelle gerade, das Gelaende nicht; ohne den Fuss klaffte auf
+// einer Woelbung ein Spalt darunter.
 const BORD_FUSS = 0.15;
-// Kantenlaenge einer Texturkachel auf dem Stein, in Metern. BEWUSST NICHT die
-// Feldweite des Zauns: bei zwei Metern liefe die Maserung mit den Pfosten im
-// Gleichschritt, und aus zwei unauffaelligen Wiederholungen wuerde eine
-// auffaellige.
+// Kantenlaenge einer Texturkachel auf dem Stein, in Metern.
 const BORD_KACHEL = 1.5;
 
 /**
- * DIE KANTE, DIE DEN GARTEN BEGRENZT.
+ * DIE SCHWELLE ZWISCHEN DEN TORSAEULEN.
  *
- * Sie laeuft auf demselben Ring wie der Zaun und mit denselben Ecken - der Zaun
- * ist ja nur noch ein kurzes Stueck neben dem Tor, und die durchgehende Grenze
- * ist jetzt diese. Angefangen wird an der einen Torsaeule, aufgehoert an der
- * anderen; durch die Toroeffnung laeuft sie nicht, dort tritt man ueber sie
- * hinweg in den Garten.
+ * Hier lief einmal ein Bordstein rings um den ganzen Garten. Den zieht jetzt
+ * wieder der Zaun; geblieben ist das eine Stueck, das wirklich etwas zu tun
+ * hat: Der Zugang besteht aus ZWEI Wegen - drinnen der, der zum Rundweg
+ * fuehrt, draussen der, der ins Freie laeuft -, und die stossen im Tor
+ * aneinander. Zwei Baender, die sich beruehren, zeigen dort eine Fuge und
+ * einen Sprung in der Kachelung. Die Schwelle legt sich darueber.
  *
- * DREI FLAECHEN, KEINE SEITEN: aussen hinauf, oben hinueber, innen hinunter.
- * Enddeckel braucht sie keine - an beiden Enden steckt sie in einer Torsaeule,
- * und was dort zu sehen waere, ist verdeckt.
+ * Sie reicht von Saeulenmitte zu Saeulenmitte; ihre Enden verschwinden dadurch
+ * im Holz und muessen nicht sauber anschliessen. Und sie ist nur zwei
+ * Zentimeter hoch - man soll ueber sie treten, nicht an ihr haengenbleiben.
  *
- * Die Krone liegt quer waagerecht, wie ein Weg: beide Wangen bekommen die
- * Gelaendehoehe der Mittellinie. Anders herum stuende der Stein am Hang
- * verkantet, und ein Bordstein ist gegossen, nicht gewachsen.
- *
- * DREI BAENDER, NICHT HUNDERTVIERUNDFUENFZIG STUECKE. Zuerst bekam jedes
- * Zweimeterstueck seine eigenen acht Ecken; damit stiess an jeder Fuge eine
- * eigene Normale auf die naechste, und die Kante zeigte alle zwei Meter einen
- * Helligkeitssprung - eine Wiederholung im Takt der Zaunfelder, die wie ein
- * Texturfehler aussah, aber keiner war. Jetzt teilen aufeinanderfolgende
- * Stuecke ihre Ecken, LAENGS des Rings: die Beleuchtung laeuft glatt durch.
- * Quer dagegen bleiben die drei Baender getrennt - sonst rundete die gemittelte
- * Normale die Oberkante ab, und ein Bordstein hat dort eine Kante.
- *
- * Und alles in EINEM Netz: neunhundert Dreiecke sind nichts, und aufgeteilt
- * kaeme an jeder Sektorgrenze wieder eine Fuge mit eigener Normale.
+ * DREI FLAECHEN, KEINE SEITEN: vorn hinauf, oben hinueber, hinten hinunter.
+ * Die Oberseite liegt waagerecht auf der hoeheren der beiden Saeulen - eine
+ * Schwelle ist gegossen, nicht gewachsen.
  */
 export function buildBordstein(cfg, hf, textur, sektoren, tor) {
-  const ecken = planZaun(cfg);
-  if (!cfg.bordstein || ecken.length < 3) return [];
-  const n = ecken.length;
+  if (!cfg.bordstein || !tor) return [];
+  const A = { x: tor.a.x, z: tor.a.z };
+  const B = { x: tor.b.x, z: tor.b.z };
+  const laenge = Math.hypot(B.x - A.x, B.z - A.z);
+  if (laenge < 0.5) return [];
 
-  // Die Folge der Stuetzstellen: vom Pfosten hinter der Torluecke einmal herum
-  // bis zum Pfosten davor. Ohne Tor ist es der geschlossene Ring.
-  const folge = [];
-  if (tor) {
-    const start = (tor.i + tor.luecke) % n;
-    for (let k = 0; k <= n - tor.luecke; k++) folge.push(ecken[(start + k) % n]);
-  } else {
-    for (let k = 0; k <= n; k++) folge.push(ecken[k % n]);
-  }
-
-  // Je Stuetzstelle die vier Punkte des Profils - aussen unten, aussen oben,
-  // innen oben, innen unten - dazu die Bogenlaenge fuer die Kachelung.
+  // Laengs von Saeule zu Saeule, quer dazu die Breite.
+  const lx = (B.x - A.x) / laenge, lz = (B.z - A.z) / laenge;
+  const qx = -lz, qz = lx;
   const halb = BORD_B / 2;
-  const stellen = [];
-  let bogen = 0;
-  for (let k = 0; k < folge.length; k++) {
-    const p = folge[k];
-    if (k > 0) bogen += Math.hypot(p.x - folge[k - 1].x, p.z - folge[k - 1].z);
-    const r = Math.hypot(p.x, p.z) || 1;
-    const nx = p.x / r, nz = p.z / r;                   // nach aussen
-    const oben = hf.heightAt(p.x, p.z) + BORD_H;
-    const unten = oben - BORD_H - BORD_FUSS;
-    stellen.push({
-      bogen,
-      ax: p.x + nx * halb, az: p.z + nz * halb,         // aussen
-      ix: p.x - nx * halb, iz: p.z - nz * halb,         // innen
-      oben, unten,
-    });
-  }
+  // DIE HOEHE KOMMT VOM WEG, NICHT VON DEN SAEULEN.
+  //
+  // Hier stand die groessere der beiden Gelaendehoehen an den Torsaeulen - und
+  // die stehen zwei Meter seitlich, also NEBEN dem Weg. Der Weg liegt dort
+  // knapp drei Zentimeter tiefer als die Wiese daneben (er liegt quer
+  // waagerecht, das Gelaende nicht), und die Schwelle stand dadurch nicht zwei
+  // Zentimeter ueber dem Pflaster, sondern viereinhalb. Aus Augenhoehe sieht
+  // man von einem so flachen Stein fast nur seine senkrechte Vorderwange, und
+  // die bekommt von einer hochstehenden Sonne kaum Licht: gemessen 66 gegen
+  // 178 bis 201 ringsum - ein schwarzer Strich quer ueber den Weg.
+  //
+  // Von der Wegmitte genommen steht sie ueber dem Pflaster genau ihre zwei
+  // Zentimeter. Wo sie seitlich ueber die Wegkante hinausreicht, verschwindet
+  // sie in der etwas hoeheren Wiese - fuer eine Schwelle im Durchgang ist
+  // genau das richtig.
+  const oben = hf.heightAt(tor.mitte.x, tor.mitte.z) + BORD_H;
+  const unten = oben - BORD_H - BORD_FUSS;
+
+  // Vier Ecken im Grundriss: vorn/hinten je Saeule.
+  const ecke = (p, s) => [p.x + qx * halb * s, p.z + qz * halb * s];
+  const [avx, avz] = ecke(A, +1), [ahx, ahz] = ecke(A, -1);
+  const [bvx, bvz] = ecke(B, +1), [bhx, bhz] = ecke(B, -1);
 
   // Die Lage auf dem Profil, als Weg quer ueber den Stein - daraus kommt die
-  // zweite Texturkoordinate. So laeuft die Maserung ueber die Oberkante hinweg
-  // weiter, statt an jeder Flaeche neu anzusetzen.
+  // zweite Texturkoordinate, damit die Maserung ueber die Kanten weiterlaeuft.
   const hoch = BORD_H + BORD_FUSS;
-  const vAU = 0, vAO = hoch, vIO = hoch + BORD_B, vIU = 2 * hoch + BORD_B;
+  const vVU = 0, vVO = hoch, vHO = hoch + BORD_B, vHU = 2 * hoch + BORD_B;
 
   const pos = [], uv = [], idx = [];
   const punkt = (x, y, z, u, v) => {
     pos.push(x, y, z); uv.push(u / BORD_KACHEL, v / BORD_KACHEL);
     return pos.length / 3 - 1;
   };
-  /**
-   * Ein Band ueber alle Stuetzstellen. `kante` liefert je Stelle die beiden
-   * Punkte des Bandes; die Reihenfolge entscheidet, wohin es blickt.
-   */
-  const band = (kante) => {
-    let vor = null;
-    for (const st of stellen) {
-      const [p1, p2] = kante(st);
-      const jetzt = [punkt(p1[0], p1[1], p1[2], st.bogen, p1[3]),
-                     punkt(p2[0], p2[1], p2[2], st.bogen, p2[3])];
-      if (vor) idx.push(vor[0], vor[1], jetzt[1], vor[0], jetzt[1], jetzt[0]);
-      vor = jetzt;
-    }
-  };
-  // Aussenwange blickt nach aussen, Krone nach oben, Innenwange nach innen.
-  band((s) => [[s.ax, s.unten, s.az, vAU], [s.ax, s.oben, s.az, vAO]]);
-  band((s) => [[s.ax, s.oben, s.az, vAO], [s.ix, s.oben, s.iz, vIO]]);
-  band((s) => [[s.ix, s.oben, s.iz, vIO], [s.ix, s.unten, s.iz, vIU]]);
+  const flaeche = (p1, p2, p3, p4) => idx.push(p1, p2, p3, p1, p3, p4);
+
+  const aVU = punkt(avx, unten, avz, 0, vVU);
+  const aVO = punkt(avx, oben,  avz, 0, vVO);
+  const aHO = punkt(ahx, oben,  ahz, 0, vHO);
+  const aHU = punkt(ahx, unten, ahz, 0, vHU);
+  const bVU = punkt(bvx, unten, bvz, laenge, vVU);
+  const bVO = punkt(bvx, oben,  bvz, laenge, vVO);
+  const bHO = punkt(bhx, oben,  bhz, laenge, vHO);
+  const bHU = punkt(bhx, unten, bhz, laenge, vHU);
+  flaeche(aVU, aVO, bVO, bVU);      // vorn
+  flaeche(aVO, aHO, bHO, bVO);      // oben
+  flaeche(aHO, aHU, bHU, bHO);      // hinten
 
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
@@ -426,14 +549,10 @@ export function buildBordstein(cfg, hf, textur, sektoren, tor) {
   }));
   mesh.castShadow = true;
   mesh.receiveShadow = true;
-  mesh.name = 'bordstein';
+  mesh.name = 'torschwelle';
 
   const meshes = [mesh];
-  meshes.stats = {
-    stuecke: stellen.length - 1,
-    laenge: Math.round(stellen[stellen.length - 1].bogen),
-    hoehe: BORD_H, breite: BORD_B, kachel: BORD_KACHEL,
-  };
+  meshes.stats = { laenge: +laenge.toFixed(2), hoehe: BORD_H, breite: BORD_B };
   return meshes;
 }
 

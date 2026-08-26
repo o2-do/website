@@ -133,6 +133,7 @@ export function createBodenkarte(cfg) {
 
   const stempel = [];
   const kreise = [];
+  const ellipsen = [];
   let an = true;
 
   // Das Uniform-Objekt steht ausserhalb und wird nur hineingereicht. Es innen
@@ -174,6 +175,30 @@ export function createBodenkarte(cfg) {
       if (durchmesser > 0) kreise.push({ x, z, r: durchmesser / 2, deckung });
     },
 
+    /**
+     * EIN SCHATTEN MIT RICHTUNG UND LAENGE.
+     *
+     * Ein Kreis ist fuer ein Grasbueschel das richtige Mass, fuer einen
+     * Felsblock oder eine Zypresse aber nicht: die stehen aufrecht in der
+     * Landschaft, und ihr Schatten liegt nicht um sie herum, sondern LAENGS von
+     * ihnen weg. Bei einer sechs Meter hohen Zypresse und der Sonne auf ihrer
+     * Bahn sind das mehrere Meter - ein Kreis von einem Meter Durchmesser
+     * darunter sah aus wie ein Fleck, nicht wie ein Schatten.
+     *
+     * Was ein aufrechter Koerper wirft, ist der Umriss seines Grundrisses,
+     * verschoben um Hoehe mal Kotangens des Sonnenstandes - also eine Kapsel:
+     * der Grundriss am Fuss, derselbe noch einmal am Ende des Versatzes, und
+     * dazwischen ausgezogen. Eine Ellipse mit denselben Halbachsen trifft das
+     * gut genug und laesst sich in einem Zug zeichnen.
+     *
+     *   laengs  halbe Laenge, in Richtung `winkel`
+     *   quer    halbe Breite
+     *   winkel  Richtung in der x/z-Ebene, im Bogenmass
+     */
+    setzeEllipse(x, z, laengs, quer, winkel, deckung = 1) {
+      if (laengs > 0 && quer > 0) ellipsen.push({ x, z, laengs, quer, winkel, deckung });
+    },
+
     /** Die ganze Karte auf einmal zeichnen. */
     zeichne() {
       ctx.globalCompositeOperation = 'source-over';
@@ -183,6 +208,34 @@ export function createBodenkarte(cfg) {
       // gar nichts gezeichnet, dort bleibt der Untergrund also unberuehrt.
       ctx.globalCompositeOperation = 'darken';
       const proMeter = px / weite;
+
+      // Erst die Ellipsen, dann die Kreise - die Reihenfolge ist gleichgueltig,
+      // weil ohnehin der dunklere Bildpunkt gewinnt.
+      for (const e of ellipsen) {
+        const a = Math.max(1, e.laengs * proMeter);
+        const b = Math.max(1, e.quer * proMeter);
+        const cx = (e.x + weite / 2) * proMeter;
+        const cz = (e.z + weite / 2) * proMeter;
+        const v = Math.round(255 * (1 - Math.min(1, Math.max(0, e.deckung))));
+        const halb = Math.round(v + (255 - v) * 0.45);
+        // Gezeichnet wird als KREIS in einem gestauchten Koordinatensystem -
+        // ein Farbverlauf laesst sich nicht elliptisch anlegen, eine Leinwand
+        // aber verzerren. Sonst muesste der Verlauf Punkt fuer Punkt von Hand
+        // gerechnet werden.
+        ctx.save();
+        ctx.translate(cx, cz);
+        ctx.rotate(e.winkel);
+        ctx.scale(1, b / a);
+        const g = ctx.createRadialGradient(0, 0, a * 0.25, 0, 0, a);
+        g.addColorStop(0, `rgb(${v},${v},${v})`);
+        g.addColorStop(0.65, `rgb(${halb},${halb},${halb})`);
+        g.addColorStop(1, 'rgb(255,255,255)');
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(0, 0, a, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
 
       for (const k of kreise) {
         const r = Math.max(1, k.r * proMeter);

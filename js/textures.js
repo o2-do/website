@@ -17,7 +17,7 @@ export async function loadTextures(renderer) {
     // Platzhalter fuer das Nadelkleid der Zypressen. Eine eigene Vorlage gibt
     // es noch nicht; die Wiesenkachel liest sich unter der Drehung und der
     // engen Wiederholung des Konfigurators als dichtes Gruen.
-    zypresse: 'img/wiese.jpg',
+    zypresse: 'img/zypresse.jpg',
     wellen: 'water/waternormals.jpg',   // Normalkarte der Wasseroberflaeche
   };
   const maxAniso = renderer.capabilities.getMaxAnisotropy();

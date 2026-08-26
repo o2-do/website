@@ -108,12 +108,15 @@ export const SCHEMA = [
   // (siehe `zaun.js`). Deshalb hat er keine eigenen Masse im Formular: seine
   // Gestalt steht schon unter „Wege".
   { group: 'Zaun', key: 'zaun', label: 'Zaun um den Garten', type: 'checkbox', default: true },
-  // Der Zaun laeuft nicht mehr rings um den Garten, sondern steht als kurzes
-  // Stueck beiderseits des Tors - die Grenze zieht seit jetzt der Bordstein.
-  // Gezaehlt wird in Feldern (Pfosten zu Pfosten), gerechnet ab der Torsaeule;
-  // beide Seiten enden mit einem Pfosten.
-  { group: 'Zaun', key: 'zaunFelder', label: 'Zaunfelder je Torseite', unit: 'à 2 m', type: 'range', min: 0, max: 40, step: 1, default: 5 },
-  { group: 'Zaun', key: 'bordstein', label: 'Bordstein um den Garten', type: 'checkbox', default: true },
+  // Die Schwelle zwischen den Torsaeulen - sie deckt die Stossfuge der beiden
+  // Zugangswege ab (siehe `buildBordstein` in `zaun.js`).
+  { group: 'Zaun', key: 'bordstein', label: 'Schwelle im Tor', type: 'checkbox', default: false },
+  // GELAENDER STATT ZAUN: dieselben Pfosten und Querhoelzer, aber am Weg statt
+  // an der Grenze. Gesetzt werden sie dort, wo es neben dem Weg steil bergab
+  // geht - das ist am Gartenrand die Regel, weil dort die Boeschung keinen
+  // Platz mehr hat.
+  { group: 'Zaun', key: 'gelaender', label: 'Gelaender an steilen Wegen', type: 'checkbox', default: true },
+  { group: 'Zaun', key: 'gelaenderAb', label: 'Gelaender ab Gefaelle', unit: 'Grad', type: 'range', min: 10, max: 60, step: 1, default: 28 },
 
   { group: 'Schilder', key: 'schriftGroesse', label: 'Schriftgroesse', unit: 'm', type: 'range', min: 0.04, max: 0.3, step: 0.005, default: 0.12 },
   { group: 'Schilder', key: 'schildRand', label: 'Rand um die Schrift', unit: 'm', type: 'range', min: 0.01, max: 0.2, step: 0.005, default: 0.05 },
@@ -153,7 +156,10 @@ export const SCHEMA = [
   // Der Tuempel: eine Mulde in der Wiese und eine Scheibe darin. Der Platz
   // wird gesucht, nicht gewuerfelt - unter vierhundert Kandidaten gewinnt der
   // ebenste, denn ein Tuempel am Hang laeuft aus und man sieht es ihm an.
-  { group: 'Wasser', key: 'teichDurchmesser', label: 'Durchmesser des Tuempels', unit: 'm (0 = keiner)', type: 'range', min: 0, max: 20, step: 0.5, default: 5 },
+  // Als benannte Wahl und nicht als Haken: so steht in der gespeicherten Datei
+  // „mit See" und nicht „true", und wer sie spaeter liest, muss nicht raten.
+  { group: 'Wasser', key: 'see', label: 'See im Garten', type: 'select', options: ['mit See', 'ohne See'], default: 'mit See' },
+  { group: 'Wasser', key: 'teichDurchmesser', label: 'Durchmesser des Sees', unit: 'm', type: 'range', min: 1, max: 20, step: 0.5, default: 5 },
   // Was die Wasserflaeche kostet:
   //   einfarbig   eine Flaeche in einer Farbe - so teuer wie jedes Dreieck
   //   spiegel     die Szene wird je Bild ein zweites Mal gezeichnet (~0,24 ms)

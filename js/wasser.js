@@ -53,6 +53,7 @@ const MAX_SCHIEFE = SPIEGEL_UNTER_GRUND;
  * an; die paar Dutzend Abfragen sind das billigste Mittel dagegen.
  */
 export function planeTeich(base, cfg, paths) {
+  if (cfg.see === 'ohne See') return null;
   const d = Math.max(0, cfg.teichDurchmesser);
   if (d <= 0) return null;
 
@@ -137,6 +138,22 @@ function abstandZumWeg(p, x, z) {
 }
 
 /**
+ * DER BECKENHALBMESSER IN EINER RICHTUNG.
+ *
+ * Er steht hier fuer sich, weil ZWEI Dinge ihn brauchen und beide genau
+ * denselben Wert bekommen muessen: das Ausheben der Mulde und der Umriss der
+ * Wasserscheibe. Solange die Scheibe ein Kreis war und die Mulde nicht, ragte
+ * sie dort, wo der Beckenrand eingezogen ist, ueber die Boeschung hinaus - und
+ * lag dann auf unveraendertem Gelaende. Liegt das tiefer als der Spiegel, kam
+ * das Wasser jenseits des Ufers wieder heraus.
+ */
+export function beckenHalbmesser(teich, winkel) {
+  let f = 1;
+  for (const w of teich.wellen) f += 0.09 * Math.sin(w.n * winkel + w.phase);
+  return teich.rBecken * Math.min(1.2, Math.max(0.5, f));
+}
+
+/**
  * Das Becken ausheben: die Wiesenpunkte senken.
  *
  * Innerhalb des Beckens auf eine feste Hoehe - ein Teichboden ist eben -, nach
@@ -149,21 +166,14 @@ function abstandZumWeg(p, x, z) {
  */
 export function hebeAus(P, teich, RASTER) {
   if (!teich) return 0;
-  const { x, z, rBecken, rUfer, grund, wellen } = teich;
-  // Der Beckenhalbmesser in einer Richtung - Grundmass plus die drei
-  // Oberwellen. Nie kleiner als die Haelfte, nie groesser als 1,2 mal.
-  const halbmesser = (winkel) => {
-    let f = 1;
-    for (const w of wellen) f += 0.09 * Math.sin(w.n * winkel + w.phase);
-    return rBecken * Math.min(1.2, Math.max(0.5, f));
-  };
+  const { x, z, rBecken, rUfer, grund } = teich;
   let n = 0;
   for (let i = 0; i < P.x.length; i++) {
     if (P.art[i] !== RASTER || P.aus[i]) continue;
     const dx = P.x[i] - x, dz = P.z[i] - z;
     const d = Math.hypot(dx, dz);
     if (d >= rBecken * 1.2 + rUfer) continue;
-    const rb = halbmesser(Math.atan2(dz, dx));
+    const rb = beckenHalbmesser(teich, Math.atan2(dz, dx));
     if (d >= rb + rUfer) continue;
     let soll;
     if (d <= rb) {
@@ -253,8 +263,7 @@ export function imTeichfeld(teich, x, z) {
  */
 export function baueWasser(teich, cfg, normalKarte, qualitaet) {
   if (!teich) return null;
-  const geo = new THREE.CircleGeometry(teich.rScheibe, 64);
-  geo.rotateX(-Math.PI / 2);
+  const geo = scheibenNetz(teich);
 
   const karte = normalKarte.clone();
   karte.needsUpdate = true;
@@ -280,6 +289,44 @@ export function baueWasser(teich, cfg, normalKarte, qualitaet) {
   mesh.name = 'wasser';
   mesh.receiveShadow = false;
   return mesh;
+}
+
+/**
+ * DIE WASSERSCHEIBE, dem Ufer nachgezogen.
+ *
+ * Sie endet genau dort, wo die Boeschung wieder auf Gelaendehoehe angekommen
+ * ist - also am aeusseren Rand dessen, was ueberhaupt abgesenkt wurde. Weiter
+ * darf sie nicht: dahinter liegt unberuehrtes Gelaende, und wo das tiefer liegt
+ * als der Spiegel, stuende sonst Wasser mitten in der Wiese. Naeher darf sie
+ * auch nicht, sonst schwebte ihre Kante frei ueber dem Hang.
+ */
+function scheibenNetz(teich, segmente = 128) {
+  const pos = [0, 0, 0];
+  const uv = [0.5, 0.5];
+  const nor = [0, 1, 0];
+  const idx = [];
+  const mass = teich.rBecken * 1.2 + teich.rUfer;      // fuer die Kachelung
+  for (let i = 0; i < segmente; i++) {
+    const w = (i / segmente) * Math.PI * 2;
+    const r = beckenHalbmesser(teich, w) + teich.rUfer;
+    const x = Math.cos(w) * r, z = Math.sin(w) * r;
+    pos.push(x, 0, z);
+    uv.push(0.5 + x / (2 * mass), 0.5 + z / (2 * mass));
+    nor.push(0, 1, 0);
+  }
+  // Wicklung gegen den Uhrzeigersinn IN DER EBENE, damit die Flaeche nach oben
+  // blickt - mit wachsendem Winkel laeuft sie in x/z andersherum, als man es
+  // von einem Bildschirm gewohnt ist.
+  for (let i = 0; i < segmente; i++) {
+    idx.push(0, 1 + ((i + 1) % segmente), 1 + i);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  geo.setIndex(idx);
+  geo.computeBoundingSphere();
+  return geo;
 }
 
 /**
@@ -345,9 +392,30 @@ function spiegelFlaeche(geo, teich, karte, cfg) {
         vec3 n2 = texture2D(tNormal, vWelt.xz * 0.091 + vec2(-0.0091,  0.0133) * zeit).rgb;
         vec2 stoerung = (n1.xy + n2.xy - 1.0) * wellen;
 
-        vec4 uv = vSpiegel;
-        uv.xy += stoerung * uv.w;
-        vec3 gespiegelt = texture2DProj(tSpiegel, uv).rgb;
+        // DIE SPIEGELTEXTUR HAT EINEN RAND, und hinter ihm steht nichts.
+        //
+        // Sie zeigt genau das, was die gespiegelte Kamera sieht - also den
+        // Bildausschnitt. Wo die Wasserflaeche bis an den Bildrand laeuft,
+        // schiebt die Wellenstoerung die Abtastung darueber hinaus, und dort
+        // gibt es keine Auskunft mehr: der Randpixel wird zu einem Streifen
+        // ausgezogen, und quer zur Kante entstehen die Fransen.
+        //
+        // Zwei Massnahmen, und beide braucht es. Die Stoerung wird nahe dem
+        // Rand ausgeblendet, damit die Abtastung gar nicht erst hinauslaeuft -
+        // ein weicher Uebergang ueber einen schmalen Saum, den man nicht sieht,
+        // weil die Wellen dort ohnehin fast senkrecht betrachtet werden. Und
+        // was danach noch draussen liegt, wird auf den Rand geklemmt statt
+        // fortgesetzt: dann steht dort der Randpixel, wie er soll.
+        //
+        // Geteilt wird von Hand statt mit texture2DProj: hinter der Kamera wird
+        // w negativ, und die Projektion lieferte dann einen Punkt aus dem
+        // Nichts.
+        float w = max(vSpiegel.w, 1e-4);
+        vec2 basis = vSpiegel.xy / w;
+        float saum = min(min(basis.x, 1.0 - basis.x), min(basis.y, 1.0 - basis.y));
+        float daempfung = clamp(saum / 0.05, 0.0, 1.0);
+        vec2 abtast = clamp(basis + stoerung * daempfung, 0.0, 1.0);
+        vec3 gespiegelt = texture2D(tSpiegel, abtast).rgb;
 
         // Fresnel: von oben sieht man ins Wasser, flach darueber den Spiegel.
         // Bei ausgeschalteter Toenung faellt er weg - dann ist die Flaeche

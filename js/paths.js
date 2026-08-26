@@ -293,6 +293,15 @@ function makePath(pts, total, closed, index, cfg, hf, liftIndex, art) {
   return {
     index, closed, samples, total, liftIndex, kachel, art: art || (closed ? 'rund' : 'abk'),
     width: wieRundweg ? cfg.wegBreite : cfg.wegBreiteAbk,
+    // WIE DIE TEXTUR QUER ZUM WEG SITZT.
+    //
+    // Der Rundweg traegt eine Kachel - Pflaster hat eine eigene Groesse, und
+    // die soll in beiden Richtungen dieselbe sein. Die Abkuerzung traegt ein
+    // BAND: ein Bild, das den Trampelpfad einmal in ganzer Breite zeigt, mit
+    // ausgetretener Mitte und Gras an den Kanten. Bei ihr gehoert der linke
+    // Bildrand an die linke Wegkante und der rechte an die rechte, sonst laeuft
+    // die Naht mitten ueber den Pfad.
+    bandQuer: !wieRundweg,
   };
 }
 
@@ -795,8 +804,12 @@ function strahlSchnitt(ax, az, bx, bz, cx, cz, dx, dz) {
 }
 
 
-// Wie weit der Weg ueber die Gartengrenze hinaus nach draussen laeuft.
-const TOR_WEG_DRAUSSEN = 4.0;
+// Wie weit der Weg jenseits des Tors nach draussen laeuft. Das ist ein EIGENES
+// Stueck (`baueAussenweg` in `wegnetz.js`) und nicht mehr Teil des Zugangs:
+// drinnen gehoert er zum Garten und wird mit ihm vernetzt, draussen liegt er
+// auf der Horizontscheibe und hat mit dem Netz nichts zu schaffen. In der
+// Vogelperspektive faellt er weg - dort hoert die Anlage am Rand auf.
+export const TOR_WEG_DRAUSSEN = 10.0;
 
 /**
  * Der Zugangsweg: vom Rundweg durch das Tor und noch ein Stueck nach draussen.
@@ -860,8 +873,20 @@ export function torWeg(cfg, hf, paths, tor, index) {
   if (!isFinite(dMitte)) dMitte = grob + ziel.width / 2;
   const innen = { x: m.x - ux * dMitte, z: m.z - uz * dMitte };
 
-  const aussenR = cfg.durchmesser / 2 + TOR_WEG_DRAUSSEN;
-  const aussen = { x: ux * aussenR, z: uz * aussenR };
+  // UND ER ENDET AM WIESENRAND, NICHT IM TOR.
+  //
+  // Beides ist versucht worden. Im Tor zu enden liest sich besser - dort steht
+  // die Schwelle, dort wechselt man von drinnen nach draussen. Nur endet er
+  // dann MITTEN in der Wiese, und zwischen seiner Stirnkante und dem
+  // anschliessenden Aussenstueck bleibt ein Streifen Wiese von wenigen
+  // Zentimetern stehen: als gruener Faden quer ueber das Pflaster gut sichtbar.
+  //
+  // Am Wiesenrand gibt es diesen Streifen nicht. Dort wird der Weg an der
+  // Randlinie GESCHNITTEN und teilt sich mit ihr die Punkte - dahinter ist
+  // keine Wiese mehr, die durchscheinen koennte. Er laeuft deshalb ueber den
+  // Rand hinaus und wird dort gekappt (`beschneideWege` in `wegnetz.js`).
+  const ueberR = cfg.durchmesser / 2 + 1.0;
+  const aussen = { x: ux * ueberR, z: uz * ueberR };
   const linie = resample([innen, aussen], cfg.wegSample, false);
   if (linie.total < cfg.wegBreite) return null;
   return makePath(linie.pts, linie.total, false, index, cfg, hf, 1, 'tor');

@@ -189,10 +189,25 @@ bind('btn-left', () => frei() && walker.enqueueTurn(+1));
 bind('btn-right', () => frei() && walker.enqueueTurn(-1));
 
 // Das Kartensymbol schaltet zwischen Augenhoehe und Vogelperspektive um.
+// Das Symbol zeigt, WOHIN es geht, nicht wo man ist: in der Augenhoehe die
+// Karte, in der Karte die Ansicht. Ein Knopf, der sein eigenes Ziel abbildet,
+// braucht keine Beschriftung.
+function zeigeKartenknopf(bird) {
+  const knopf = document.getElementById('btn-karte');
+  if (!knopf) return;
+  knopf.classList.toggle('aktiv', bird);
+  const bild = knopf.querySelector('img');
+  if (bild) {
+    bild.src = bird ? 'img/perspektive.jpg' : 'img/karte.jpg';
+    bild.alt = bird ? 'Augenhöhe' : 'Karte';
+  }
+  knopf.title = bird ? 'Zurück in die Augenhöhe' : 'In die Vogelperspektive';
+}
+
 bind('btn-karte', () => {
   const bird = !viewer.isBird();
   viewer.setCamera(bird ? 'bird' : 'walk');
-  document.getElementById('btn-karte').classList.toggle('aktiv', bird);
+  zeigeKartenknopf(bird);
   schattenAnwenden(normalize(rohwerte));
 });
 
@@ -200,18 +215,27 @@ bind('btn-neu', () => {
   rohwerte = { ...rohwerte, seed: 'garten-' + Math.random().toString(36).slice(2, 8) };
   if (viewer.isBird()) {
     viewer.setCamera('walk');
-    document.getElementById('btn-karte').classList.remove('aktiv');
+    zeigeKartenknopf(false);
   }
   rebuild();
 });
 
+// WASD neben den Pfeilen - dieselbe Belegung wie im Konfigurator.
+const RICHTUNG = {
+  ArrowUp: 'vor', w: 'vor', ArrowDown: 'zurueck', s: 'zurueck',
+  ArrowLeft: 'links', a: 'links', ArrowRight: 'rechts', d: 'rechts',
+};
+
 window.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const was = RICHTUNG[e.key.length === 1 ? e.key.toLowerCase() : e.key];
+  if (!was) return;
+  e.preventDefault();
   if (!frei()) return;
-  if (e.key === 'ArrowUp') { walker.enqueue('forward'); e.preventDefault(); }
-  if (e.key === 'ArrowDown') { walker.enqueue('back'); e.preventDefault(); }
-  if (e.key === 'ArrowLeft') { walker.enqueueTurn(+1); e.preventDefault(); }
-  if (e.key === 'ArrowRight') { walker.enqueueTurn(-1); e.preventDefault(); }
+  if (was === 'vor') walker.enqueue('forward');
+  else if (was === 'zurueck') walker.enqueue('back');
+  else walker.enqueueTurn(was === 'links' ? +1 : -1);
 });
 
 /* ---------------- Umschauen und Hingehen ---------------- */
@@ -311,8 +335,17 @@ canvas.addEventListener('wheel', (e) => {
 
 /* ---------------- Frame ---------------- */
 
+let wasserZeit = 0;
+
 viewer.onFrame((dt) => {
   walker.update(dt);
+  // Die Wellen laufen ueber die Zeit. Ohne diesen Aufruf stand das Wasser hier
+  // still, waehrend es im Bauprogramm lief - dort haengt derselbe Tick in
+  // seiner eigenen Bildschleife (`main.js`).
+  if (garden && garden.wasser && garden.wasser.userData.tick) {
+    wasserZeit += dt;
+    garden.wasser.userData.tick(wasserZeit);
+  }
   // Das Intro ist vorbei, sobald die Warteschlange leer ist. Erst dann greift
   // die Schranke - vorher stuende der Spaziergang schon vor dem Tor still.
   if (intro) {

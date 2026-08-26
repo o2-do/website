@@ -222,10 +222,14 @@ export function buildRockMeshes(geometries, placements, material, sektoren) {
 export function stempelFelsschatten(bodenkarte, placements) {
   if (!bodenkarte) return 0;
   for (const pl of placements) {
-    const v = sonnenVersatz(pl.hoehe * 0.5);
+    // Der Versatz gilt fuer die OBERKANTE; der Fuss liegt am Ort. Der Schatten
+    // reicht also von hier bis dorthin, und seine Mitte liegt auf halbem Weg.
+    const v = sonnenVersatz(pl.hoehe);
+    const laenge = Math.hypot(v.x, v.z);
     // Voll ausgesteuert wie jeder andere Stempel auch; abgeschwaecht wird
     // erst bei der Anwendung (`SCHATTEN_STAERKE` in `bodenkarte.js`).
-    bodenkarte.setzeKreis(pl.x + v.x, pl.z + v.z, pl.radXZ * 2);
+    bodenkarte.setzeEllipse(pl.x + v.x / 2, pl.z + v.z / 2,
+                            pl.radXZ + laenge / 2, pl.radXZ, Math.atan2(v.z, v.x));
   }
   return placements.length;
 }

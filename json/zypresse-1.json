@@ -1,7 +1,7 @@
 {
   "height": 5,
   "segmentsY": 8,
-  "segmentsRadial": 7,
+  "segmentsRadial": 9,
   "maxRadius": 0.5,
   "peakPosition": 0.3,
   "topShape": 0.75,

@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { stream, rand } from './rng.js';
 import { createZypresseGeometry, createZypresseMaterial } from '../cypress/cypress-loader.js';
 import { frisch } from './frisch.js';
+import { sonnenVersatz } from './baumloader.js';
 
 /**
  * Zypressen, und zwar zu dritt.
@@ -96,7 +97,7 @@ export function planZypressen(hf, cfg, pathIndex, occ, sorten) {
       const z = cz + Math.sin(w) * umkreis;
       baeume.push({
         vorlage: k === anders ? 1 : 0,
-        x, z, y: hf.heightAt(x, z),
+        x, z, y: hf.heightAt(x, z) - 0.2, // 20cm nach unten versetzt
         dreh: rng() * Math.PI * 2,
       });
     }
@@ -142,14 +143,23 @@ export function baueZypressen(baeume, sorten, sektoren) {
 }
 
 /**
- * Der eingebrannte Schatten: ein weicher Kreis je Baum, gegen die Sonne
- * versetzt - dasselbe Mittel wie bei Felsen und Pflanzen.
+ * Der eingebrannte Schatten.
+ *
+ * Eine Zypresse ist fuenf bis sechs Meter hoch und einen halben breit - ihr
+ * Schatten ist entsprechend ein langer schmaler Streifen und kein Fleck. Er
+ * reicht vom Fuss bis zu dem Punkt, an dem die Spitze ihn hinwirft; gezeichnet
+ * wird er als Ellipse mit genau diesen Halbachsen (siehe `setzeEllipse` in
+ * `bodenkarte.js`).
  */
 export function stempelZypressenschatten(bodenkarte, baeume, sorten) {
   if (!bodenkarte || !baeume.length) return 0;
   for (const b of baeume) {
     const sorte = sorten[b.vorlage];
-    bodenkarte.setzeKreis(b.x, b.z, sorte.radius * 2.4);
+    const v = sonnenVersatz(sorte.hoehe);
+    const laenge = Math.hypot(v.x, v.z);
+    bodenkarte.setzeEllipse(b.x + v.x / 2, b.z + v.z / 2,
+                            sorte.radius + laenge / 2, sorte.radius,
+                            Math.atan2(v.z, v.x));
   }
   return baeume.length;
 }

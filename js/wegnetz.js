@@ -335,6 +335,79 @@ export function wegLinien(P, w) {
  * mehr. Die Stirnseite kippt dabei von selbst in die Ebene des Rundwegs, weil
  * ihre Punkte dessen Querschnitten gehoeren.
  */
+/**
+ * WO EIN WEG WIRKLICH AUFHOERT.
+ *
+ * Nicht an seiner letzten Stuetzstelle - die liegt bis zu einem halben
+ * Abtastschritt davor -, sondern an der Geraden durch die beiden
+ * Kreuzungspunkte. Genau diese Gerade ist auch die Zwangskante der Stirnseite,
+ * die Flaeche endet also messbar dort. Die Ebene wird am Weg vermerkt, weil die
+ * Zuordnung der Dreiecke sie braucht (`wegIndex`) und dort nur die Wege
+ * vorliegen, nicht die Randlisten.
+ */
+function merkeKappe(P, w, vonVorne, a, b) {
+  const sm = w.p.samples;
+  if (sm.length < 2) return;
+  const i = vonVorne ? 0 : sm.length - 1;
+  const j = vonVorne ? 1 : sm.length - 2;
+  // Die Laufrichtung an diesem Ende, in den Weg hinein.
+  let tx = sm[j].x - sm[i].x, tz = sm[j].z - sm[i].z;
+  const tl = Math.hypot(tx, tz) || 1;
+  tx /= tl; tz /= tl;
+  // Die Senkrechte auf der Kappe.
+  let nx = -(P.z[b] - P.z[a]), nz = P.x[b] - P.x[a];
+  const nl = Math.hypot(nx, nz) || 1;
+  nx /= nl; nz /= nl;
+
+  // GERICHTET WIRD AN DER LAUFRICHTUNG, NICHT AN EINER STUETZSTELLE.
+  //
+  // Erst stand hier die Probe, ob die naechste Stuetzstelle vor oder hinter der
+  // Ebene liegt. Das geht schief, sobald die Kappe schraeg sitzt: die
+  // Stuetzstelle kann dann selbst noch davor liegen, die Ebene kippt um, und
+  // beide Enden weisen in dieselbe Richtung. Was dabei herauskommt, sind zwei
+  // Halbebenen, die einander ausschliessen - der Weg verliert JEDES Dreieck und
+  // wird zu Wiese. Genau so sind zwei Abkuerzungen verschwunden.
+  //
+  // Die Laufrichtung kann das nicht passieren: sie zeigt am Anfang immer in den
+  // Weg hinein, gleichgueltig wo die Kappe steht.
+  const d = nx * tx + nz * tz;
+  if (Math.abs(d) < 0.2) {
+    // Sehr schraeger Anschnitt - dann taugt die Senkrechte der Kappe nicht als
+    // Richtung, und die Laufrichtung selbst ist die ehrlichere Ebene.
+    nx = tx; nz = tz;
+  } else if (d < 0) {
+    nx = -nx; nz = -nz;
+  }
+  w.p[vonVorne ? 'kappeA' : 'kappeB'] = {
+    x: (P.x[a] + P.x[b]) / 2, z: (P.z[a] + P.z[b]) / 2, nx, nz,
+  };
+}
+
+/**
+ * ZWEI EBENEN, DIE IHREN EIGENEN WEG AUSSPERREN, SIND FALSCH.
+ *
+ * Gezaehlt wird, wie viele Stuetzstellen beide Ebenen passieren lassen. Die
+ * beiden aeussersten duerfen durchaus davorliegen - nach dem Beschneiden endet
+ * die Stuetzstellenreihe bis zu einem halben Abtastschritt vor der Kappe -,
+ * aber die Mehrheit muss drinbleiben. Bleibt weniger als die Haelfte uebrig,
+ * schliessen die Ebenen einander aus, und der Weg verlaere JEDES Dreieck an die
+ * Wiese. Genau so sind zwei Abkuerzungen verschwunden.
+ *
+ * Wer durchfaellt, verliert seine Kappen und wird wieder nach der letzten
+ * Stuetzstelle beschnitten - ungenauer, aber harmlos. Der Test kostet ein paar
+ * Dutzend Multiplikationen je Weg und faengt jeden Vorzeichenfehler ab, bevor
+ * er als fehlender Weg auffaellt.
+ */
+function pruefeKappen(w) {
+  const p = w.p;
+  const sm = p.samples;
+  if (!sm.length || (!p.kappeA && !p.kappeB)) return;
+  const drin = (k, s) => !k || (s.x - k.x) * k.nx + (s.z - k.z) * k.nz >= 0;
+  let gut = 0;
+  for (const s of sm) if (drin(p.kappeA, s) && drin(p.kappeB, s)) gut++;
+  if (gut * 2 < sm.length) { p.kappeA = null; p.kappeB = null; }
+}
+
 function beschneideWege(P, wege) {
   for (const w of wege) {
     if (w.p.closed) continue;
@@ -404,6 +477,7 @@ function beschneideWege(P, wege) {
       stirn[vonVorne ? 0 : 1] = kanteZwischen(P, hoeher, a, b);
       muendung[vonVorne ? 0 : 1] = true;
       kuerzeStuetzstellen(P, w, a, b, vonVorne);
+      merkeKappe(P, w, vonVorne, a, b);
     }
 
     // Und am Wiesenrand kappen, wo der Weg hinauslaeuft. Die Stirnseite bleibt
@@ -430,6 +504,7 @@ function beschneideWege(P, wege) {
       const b = vonVorne ? w.rechts[0] : w.rechts[w.rechts.length - 1];
       stirn[vonVorne ? 0 : 1] = [];
       kuerzeStuetzstellen(P, w, a, b, vonVorne);
+      merkeKappe(P, w, vonVorne, a, b);
       // Eine LEERE Stirnseite heisst: die Kappe ist eine gerade Strecke quer
       // ueber das Band - und die laeuft genau durch den Mittelpunkt dieses
       // Querschnitts. Ein Punkt auf einer Zwangskante macht sie unmoeglich,
@@ -438,6 +513,7 @@ function beschneideWege(P, wege) {
     }
     w.stirn = stirn;
     w.muendung = muendung;
+    pruefeKappen(w);
   }
 }
 
@@ -762,11 +838,52 @@ export function netzPunkte(P) {
 
 /* ---------------- Schritt 3c: Dreiecke zuordnen ---------------- */
 
-/** Raeumlicher Index ueber die Wegsegmente - fuer die Zuordnung der Dreiecke. */
+/**
+ * Raeumlicher Index ueber die Wegsegmente - fuer die Zuordnung der Dreiecke.
+ *
+ * AN EINEM OFFENEN ENDE HOERT DER WEG AUF, und zwar an seiner Stirnkante und
+ * nicht einen halben Meter dahinter. Der Abstand zu einer Strecke legt um jeden
+ * Endpunkt eine Halbscheibe, und die des letzten Segments ragt ueber die Kappe
+ * hinaus: alles darin galt als Wegflaeche. Diese Dreiecke bekamen dann die
+ * Kachelung des Weges - und weil die Projektion am Ende klemmt, war ihre
+ * Bogenlaenge ueberall dieselbe und die zweite Texturkoordinate stand still.
+ * Heraus kam ein Streifen laengsgezogener Striche quer ueber die Naht, genau
+ * dort, wo der Zugang im Tor endet.
+ *
+ * GEPRUEFT WIRD GEGEN DIE STIRNEBENE, nicht je Segment. Ein Kennzeichen am
+ * letzten Segment genuegte nicht: die Halbscheibe des VORLETZTEN endet auf
+ * demselben Punkt wie die des letzten beginnt, greift also genauso weit
+ * hinaus. Zwei Halbebenen je offenem Weg - davor und dahinter - erledigen es
+ * ein fuer alle Mal.
+ */
 function wegIndex(paths, zelle = 2) {
   const eimer = new Map();
   const K = (i, j) => i * 100000 + j;
   const zu = (v) => Math.floor(v / zelle);
+
+  // Die beiden Stirnebenen je offenem Weg; die Normale zeigt IN den Weg hinein,
+  // wer davor liegt, gehoert nicht dazu.
+  //
+  // Wurde der Weg beschnitten, ist die Ebene die GERADE DURCH DIE BEIDEN
+  // KREUZUNGSPUNKTE (`kappeA`/`kappeB`) - dieselbe, die als Zwangskante die
+  // Stirnseite bildet. Die letzte Stuetzstelle liegt bis zu einem halben
+  // Abtastschritt davor; wer nach ihr abschneidet, verliert den vordersten
+  // Streifen des Bandes an die Wiese, und quer ueber das Pflaster steht dann
+  // ein Band Gras.
+  const enden = paths.map((p) => {
+    if (p.closed || p.samples.length < 2) return null;
+    const sm = p.samples, m = sm.length;
+    const ebene = (kappe, von, nach) => {
+      if (kappe) return kappe;
+      const dx = nach.x - von.x, dz = nach.z - von.z;
+      const l = Math.hypot(dx, dz) || 1;
+      return { x: von.x, z: von.z, nx: dx / l, nz: dz / l };
+    };
+    return {
+      a: ebene(p.kappeA, sm[0], sm[1]),
+      b: ebene(p.kappeB, sm[m - 1], sm[m - 2]),
+    };
+  });
   paths.forEach((p, pi) => {
     const sm = p.samples;
     const n = p.closed ? sm.length : sm.length - 1;
@@ -792,6 +909,11 @@ function wegIndex(paths, zelle = 2) {
       const pi = arr[n];
       const r = WEG_RANG[paths[pi].art] ?? 0;
       if (r <= rang) continue;
+      const e = enden[pi];
+      if (e) {
+        if ((x - e.a.x) * e.a.nx + (z - e.a.z) * e.a.nz < 0) continue;
+        if ((x - e.b.x) * e.b.nx + (z - e.b.z) * e.b.nz < 0) continue;
+      }
       const ax = arr[n + 1], az = arr[n + 2];
       const vx = arr[n + 3] - ax, vz = arr[n + 4] - az;
       const wx = x - ax, wz = z - az;
@@ -1224,7 +1346,9 @@ export function baueWegband(P, tri, path, cfg, material) {
       // einem anderen Weg stammt, kann seitlich weiter draussen liegen, und
       // die Kachel soll deshalb nicht ueber den Rand hinauslaufen.
       const qq = Math.max(-halb, Math.min(halb, q[e]));
-      uv[u] = qq / kachel + 0.5;
+      // Quer entweder in Metern gekachelt (Pflaster) oder einmal ueber die
+      // ganze Breite gespannt (Trampelpfad) - siehe `bandQuer` in `paths.js`.
+      uv[u] = path.bandQuer ? qq / (2 * halb) + 0.5 : qq / kachel + 0.5;
       uv[u + 1] = s[e] / kachel;
     }
   }
@@ -1236,6 +1360,74 @@ export function baueWegband(P, tri, path, cfg, material) {
   geo.computeBoundingSphere();
   const mesh = new THREE.Mesh(geo, material);
   mesh.name = `weg_${path.index}`;
+  return mesh;
+}
+
+/**
+ * DER WEG JENSEITS DES TORS.
+ *
+ * Ein eigenes Band, kein Teil des Gartennetzes. Drinnen ist der Boden eine
+ * triangulierte Flaeche, die mit den Wegen verzahnt ist; draussen liegt die
+ * Horizontscheibe, und die ist eben. Es waere also nichts gewonnen, das eine
+ * mit dem anderen zu verschneiden - ein Streifen genuegt, der dem Gelaende
+ * folgt, solange es noch eines gibt, und danach auf null ausleuft.
+ *
+ * Er beginnt am WIESENRAND, dort, wo der Zugang gekappt wird - und ein paar
+ * Zentimeter davor, damit an der Naht auf keinen Fall ein Faden Wiese
+ * durchscheint. Ueberlappen duerfen sie, weil er drei Millimeter hoeher liegt:
+ * ein Absatz, den niemand sieht, aber genug, damit die beiden Flaechen nicht um
+ * dieselben Bildpunkte streiten. Denselben Dienst tut die Anhebung gegen die
+ * Horizontscheibe, die draussen auf genau null liegt.
+ *
+ * IN DER KARTE FAELLT ER WEG. Von oben endet der Garten am Rand; ein Weg, der
+ * darueber hinaus ins Weisse laeuft, saehe aus wie ein Fehler.
+ */
+export function baueAussenweg(cfg, hf, tor, laenge, material) {
+  if (!tor) return null;
+  const r = Math.hypot(tor.mitte.x, tor.mitte.z);
+  if (r < 1e-6 || laenge <= 0) return null;
+  const ux = tor.mitte.x / r, uz = tor.mitte.z / r;    // nach aussen
+  const qx = -uz, qz = ux;                             // quer dazu
+  const halb = cfg.wegBreite / 2;
+  const kachel = cfg.kachelWeg;
+  const R = cfg.durchmesser / 2;
+  const UEBERLAPP = 0.10;                              // hinter den Wiesenrand
+  const ANHEBUNG = 0.003;                              // gegen das Flimmern
+
+  // Der Länge nach unterteilt, damit er dem Gelaende folgt: die ersten Meter
+  // liegen noch auf der Wiese, erst danach auf der ebenen Scheibe.
+  const gesamt = laenge + UEBERLAPP;
+  const schritte = Math.max(2, Math.round(gesamt / 1.0));
+  const pos = [], uv = [], idx = [];
+  for (let k = 0; k <= schritte; k++) {
+    const s = (k / schritte) * gesamt;
+    const d = R - UEBERLAPP + s;                       // Abstand von der Mitte
+    const cx = ux * d, cz = uz * d;
+    for (const seite of [-1, 1]) {
+      const x = cx + qx * halb * seite, z = cz + qz * halb * seite;
+      pos.push(x, hf.heightAt(x, z) + ANHEBUNG, z);
+      uv.push((halb * seite) / kachel + 0.5, s / kachel);
+    }
+    if (k > 0) {
+      // Wicklung so, dass die Flaeche nach OBEN blickt. Andersherum zeigen die
+      // Normalen in den Boden, und das Band verschwindet - nicht weil es fehlt,
+      // sondern weil man von hinten daraufsieht.
+      const o = (k - 1) * 2;
+      idx.push(o, o + 3, o + 2, o, o + 1, o + 3);
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  geo.computeBoundingSphere();
+
+  const mesh = new THREE.Mesh(geo, material);
+  mesh.receiveShadow = true;
+  mesh.name = 'weg_draussen';
+  mesh.userData.nurAugenhoehe = true;
   return mesh;
 }
 

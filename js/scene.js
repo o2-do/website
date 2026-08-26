@@ -23,17 +23,13 @@ function buildSky() {
         vDir = normalize(position);
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
       }`,
-    // Die letzte Zeile ist keine Kosmetik, sondern der Grund, warum der Himmel
-    // vorher so ultramarin aussah: eine THREE.Color rechnet ihren Hexwert in
-    // den linearen Arbeitsfarbraum um, der Bildschirm will ihn aber in sRGB.
-    // Die Standardmaterialien haengen diese Rueckrechnung selbst an; ein eigener
-    // Shader muss es tun, sonst kommt jede Farbe deutlich zu dunkel und zu
-    // satt heraus - aus #5588ff wurde gemessene #173fff.
     fragmentShader: `
       uniform vec3 top; uniform vec3 bottom;
       varying vec3 vDir;
       void main() {
-        float t = smoothstep(-0.05, 0.45, vDir.y);
+        // 2. Den oberen Wert von smoothstep deutlich anheben (z. B. auf 0.85 oder 0.95),
+        // damit das Grau weiter nach oben gezogen wird.
+        float t = smoothstep(-0.05, 0.85, vDir.y);
         gl_FragColor = vec4(mix(bottom, top, t), 1.0);
         #include <colorspace_fragment>
       }`,

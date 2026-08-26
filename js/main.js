@@ -427,12 +427,23 @@ walker.onChange(() => {
 // sich vorne in die Warteschlange und verschmelzen mit einem wartenden
 // Geradeaus zu einer Kurve (siehe `walker.enqueueTurn`). Die Knoepfe bleiben
 // beim schlichten Anhaengen - dort zielt man auf ein Feld und meint genau das.
+// WASD LIEGT NEBEN DEN PFEILEN, nicht statt ihrer: die eine Hand bleibt auf
+// der Maus, die andere findet w-a-s-d blind. Verglichen wird kleingeschrieben,
+// damit die Umschalttaste nicht dazwischenfunkt.
+const RICHTUNG = {
+  ArrowUp: 'vor', w: 'vor', ArrowDown: 'zurueck', s: 'zurueck',
+  ArrowLeft: 'links', a: 'links', ArrowRight: 'rechts', d: 'rechts',
+};
+
 window.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT') return;
-  if (e.key === 'ArrowUp') { walker.enqueue('forward'); e.preventDefault(); }
-  if (e.key === 'ArrowDown') { walker.enqueue('back'); e.preventDefault(); }
-  if (e.key === 'ArrowLeft') { walker.enqueueTurn(+1); e.preventDefault(); }
-  if (e.key === 'ArrowRight') { walker.enqueueTurn(-1); e.preventDefault(); }
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const was = RICHTUNG[e.key.length === 1 ? e.key.toLowerCase() : e.key];
+  if (!was) return;
+  if (was === 'vor') walker.enqueue('forward');
+  else if (was === 'zurueck') walker.enqueue('back');
+  else walker.enqueueTurn(was === 'links' ? +1 : -1);
+  e.preventDefault();
 });
 
 /* ---------------- Umschauen mit der Maus ---------------- */

@@ -3,9 +3,9 @@ import { hashSeed, stream } from './rng.js';
 import {
   createHeightField, buildHorizon, buildMapMask, buildMapBox,
 } from './terrain.js';
-import { buildPaths, makePathIndex, torWeg } from './paths.js';
+import { buildPaths, makePathIndex, torWeg, TOR_WEG_DRAUSSEN } from './paths.js';
 import {
-  baueGartennetz, hoehenfeldAusNetz, baueWiese, baueWegband,
+  baueGartennetz, hoehenfeldAusNetz, baueWiese, baueWegband, baueAussenweg,
 } from './wegnetz.js';
 import { planSigns, buildSigns } from './signs.js';
 import { createOccupancy } from './occupancy.js';
@@ -20,7 +20,9 @@ import {
   buildBedFloors, stempelPflanzenschatten,
 } from './plants.js';
 import { createSektoren } from './sektoren.js';
-import { buildZaun, buildTor, buildBordstein, planTor } from './zaun.js';
+import {
+  buildZaun, buildTor, buildBordstein, planTor, planeGelaender, buildGelaender,
+} from './zaun.js';
 import { ladeZypressen, planZypressen, baueZypressen, stempelZypressenschatten } from './zypressen.js';
 import { planeTeich, baueWasser } from './wasser.js';
 import {
@@ -348,9 +350,17 @@ export async function buildGarden(cfg, tex, onProgress = () => {}) {
   const bord = buildBordstein(cfg, hf, tex.bordstein, sektoren, tor);
   for (const m of bord) { m.userData.nurAugenhoehe = true; group.add(m); }
   stats.bordstein = bord.stats || null;
+  // Und die Gelaender an den steilen Stellen neben den Wegen. Sie gehoeren zum
+  // Zaunwerk, stehen aber am Weg - in der Karte deshalb ebenfalls draussen.
+  const gelaender = buildGelaender(planeGelaender(paths, hf, cfg), cfg, tex.pfosten, sektoren);
+  for (const m of gelaender) { m.userData.nurAugenhoehe = true; group.add(m); }
+  stats.gelaender = gelaender.stats || null;
   // Das Tor bleibt in der Karte sichtbar: es ist der Zugang und damit eine
   // Angabe zur Anlage, nicht zur Bepflanzung.
   for (const m of buildTor(cfg, hf, tex.pfosten, tor)) group.add(m);
+  // Der Weg jenseits des Tors - eigenes Band, gleiche Breite, gleicher Belag.
+  const draussen = baueAussenweg(cfg, hf, tor, TOR_WEG_DRAUSSEN, wegMat);
+  if (draussen) group.add(draussen);
   stats.tor = tor
     ? { steilste: +tor.steilste.toFixed(3), parallel: +tor.parallel.toFixed(2),
         x: +tor.mitte.x.toFixed(1), z: +tor.mitte.z.toFixed(1) }
