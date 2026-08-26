@@ -117,14 +117,19 @@ function perpendicular(v, out){
 //    darauf — eine Datei der Fassung 1 ergibt damit eine kleinere Krone als
 //    früher, weil dort dieselbe Zahl das ganze Volumen füllte. Dazu kommt
 //    „schalen“. Gelesen werden beide Fassungen; normiere() ergänzt, was fehlt.
-export const VERSION = 2;
+// 3: Die Billboards haben keine Lagen mehr. Statt {name}-{lage}-{nr}.png mit
+//    je eigener Variantenzahl gibt es eine Reihe {name}-{nr}.png, aus der für
+//    jeden Punkt der Krone gewürfelt wird — oben, unten und in der Mitte aus
+//    demselben Topf. Eine Datei der Fassung 2 bekommt als Variantenzahl die
+//    Summe ihrer drei Lagen; die Bilder muss man umbenennen.
+export const VERSION = 3;
 
 export const STANDARD = {
   v: VERSION,
   name: 'baum',
   seed: 1,
   // Änderungen von Hand, je Eckpunkt: Versatz in Metern, Löschmerker und die
-  // festgesetzte Bildnummer (tex, 1-basiert innerhalb der Lage, 0 = gewürfelt).
+  // festgesetzte Bildnummer (tex, 1-basiert, 0 = gewürfelt).
   // Sie betreffen allein das Billboard — der Punkt bleibt als Attraktor stehen,
   // sonst ändert ein verschobenes Blatt das ganze Astwerk.
   aenderungen: {},
@@ -145,7 +150,7 @@ export const STANDARD = {
     streckung:       1.0,    // Höhenmultiplikator ab Stammoberkante, 0.5 … 4
     blaehung:         0,     // 0 … 50 %, drängt die inneren Attraktoren nach außen
     billboards: {
-      unten: 2, mitte: 3, oben: 1,   // Anzahl der Bildvarianten je Lage
+      varianten: 6,                  // Bilder img/{name}-1.png … -{n}.png
       aufloesung: 256,               // Kantenlänge einer Schicht in Bildpunkten
       groesse:    2.0                // Motivbreite in Metern
     }
@@ -161,7 +166,12 @@ export const STANDARD = {
     knorrigSchaft:  14,       // 0 … 100, der Hauptstamm für sich
     knorrigStamm:   14,       // 0 … 100, am Astansatz
     knorrigHuelle:  45,       // 0 … 100, am Zweigende; dazwischen linear
+    // Zwei Farben, und dazwischen ein Verlauf: die erste gilt am Stamm, die
+    // zweite ganz außen an den Zweigenden. Sie sind gleich voreingestellt —
+    // damit steht dort dasselbe wie früher, als es nur eine gab.
     farbe:          '#3a2d20',
+    farbeHuelle:    '#3a2d20',
+    verschmelzung:  0,        // 0 … 100 %, dreht die Zweignormale zur Krone
     textur:         '',       // Pfad oder Datenadresse, leer = keine
     kachel:         2.0       // Wiederholungen je Astumfang
   }
@@ -178,20 +188,21 @@ function normAenderungen(src){
     const i = Math.round(+k);
     if (!isFinite(i) || i < 0 || i > 100000) continue;
     const a = src[k] || {};
-    // tex ist die von Hand festgesetzte Bildnummer innerhalb der Lage. Sie
-    // zählt ab 1; 0 heißt „wie gewürfelt“. Die Obergrenze ist die größte
-    // erlaubte Variantenzahl — welche Nummern es wirklich gibt, weiß erst der
-    // geladene Billboardsatz, und dort wird umgebrochen statt abgeschnitten.
+    // tex ist die von Hand festgesetzte Bildnummer. Sie zählt ab 1; 0 heißt
+    // „wie gewürfelt“. Die Obergrenze ist die größte erlaubte Variantenzahl —
+    // welche Nummern es wirklich gibt, weiß erst der geladene Billboardsatz,
+    // und dort wird umgebrochen statt abgeschnitten.
     const e = { x: cl(num(a.x, 0), -50, 50), y: cl(num(a.y, 0), -50, 50),
                 z: cl(num(a.z, 0), -50, 50), weg: !!a.weg,
-                tex: Math.round(cl(num(a.tex, 0), 0, 9)),
-                // 0 = nach der Höhe in der Krone, 1 unten, 2 mitte, 3 oben
-                lage: Math.round(cl(num(a.lage, 0), 0, 3)),
+                // Gestrichener Ast: nicht das Bild wird stummgeschaltet,
+                // sondern das Holz dahinter fällt weg. Siehe baueSkelett().
+                astWeg: !!a.astWeg,
+                tex: Math.round(cl(num(a.tex, 0), 0, 24)),
                 dreh:  cl(num(a.dreh, 0), -180, 180),
                 spieg: !!a.spieg,
                 skal:  cl(num(a.skal, 100), 10, 1000) };
-    if (e.x || e.y || e.z || e.weg || e.tex || e.lage || e.dreh || e.spieg
-        || e.skal !== 100) out[i] = e;
+    if (e.x || e.y || e.z || e.weg || e.astWeg || e.tex || e.dreh
+        || e.spieg || e.skal !== 100) out[i] = e;
   }
   return out;
 }
@@ -214,8 +225,7 @@ function normZusatz(src){
       von: von,
       x: cl(num(a.x, 0), -50, 50), y: cl(num(a.y, 0), -50, 50),
       z: cl(num(a.z, 0), -50, 50),
-      tex:  Math.round(cl(num(a.tex, 0), 0, 9)),
-      lage: Math.round(cl(num(a.lage, 0), 0, 3)),
+      tex:  Math.round(cl(num(a.tex, 0), 0, 24)),
       dreh:  cl(num(a.dreh, 0), -180, 180),
       spieg: !!a.spieg,
       skal:  cl(num(a.skal, 100), 10, 1000)
@@ -280,9 +290,12 @@ export function normiere(src){
       streckung:       cl(num(h.streckung, 1), 0.5, 4),
       blaehung:        cl(num(h.blaehung, 0), 0, 50),
       billboards: {
-        unten: Math.round(cl(num(b.unten, 2), 1, 9)),
-        mitte: Math.round(cl(num(b.mitte, 3), 1, 9)),
-        oben:  Math.round(cl(num(b.oben,  1), 1, 9)),
+        // Fehlt die Variantenzahl, kommt sie aus den drei Lagen der Fassung 2:
+        // wer sechs Bilder hatte, hat auch danach sechs — nur heißen sie jetzt
+        // {name}-1.png bis {name}-6.png statt {name}-{lage}-{nr}.png.
+        varianten: Math.round(cl(num(b.varianten,
+                     num(b.unten, 0) + num(b.mitte, 0) + num(b.oben, 0) || 6),
+                     1, 24)),
         // Nur Zweierpotenzen, sonst kostet die Textur unnötig Speicher.
         aufloesung: num(b.aufloesung, 256) >= 384 ? 512 : 256,
         groesse:    cl(num(b.groesse, MOTIV), 0.2, 12)
@@ -303,6 +316,12 @@ export function normiere(src){
       knorrigStamm:  cl(num(z.knorrigStamm, 14), 0, 100),
       knorrigHuelle: cl(num(z.knorrigHuelle, 45), 0, 100),
       farbe:         /^#[0-9a-f]{6}$/i.test(z.farbe || '') ? z.farbe : STANDARD.holz.farbe,
+      // Fehlt die Hüllenfarbe, gilt die Stammfarbe. Eine Datei aus der Zeit
+      // vor der Teilung behält damit ihr einfarbiges Holz.
+      verschmelzung: cl(num(z.verschmelzung, 0), 0, 100),
+      farbeHuelle:   /^#[0-9a-f]{6}$/i.test(z.farbeHuelle || '') ? z.farbeHuelle
+                     : (/^#[0-9a-f]{6}$/i.test(z.farbe || '') ? z.farbe
+                                                              : STANDARD.holz.farbe),
       textur:        typeof z.textur === 'string' ? z.textur.trim() : STANDARD.holz.textur,
       kachel:        cl(num(z.kachel, 2), 0.25, 12)
     }
@@ -435,7 +454,10 @@ export function baueHuelle(cfg){
   const sichtbar = aussen.slice();
   let sichtbarAnzahl = 0;
   for (let i = 0; i < sichtbar.length; i++){
-    if (ae[i] && ae[i].weg) sichtbar[i] = false;
+    // Zwei Wege, auf denen ein Punkt sein Bild verliert: von Hand gelöscht,
+    // oder der Ast dorthin ist gestrichen — dann steht dort kein Holz mehr,
+    // an dem ein Blatt hängen könnte.
+    if (ae[i] && (ae[i].weg || ae[i].astWeg)) sichtbar[i] = false;
     if (sichtbar[i]) sichtbarAnzahl++;
   }
 
@@ -545,7 +567,17 @@ export function baueSkelett(cfg, huelle){
       stamm: false, stammPfad: !!stammPfad,
       punkt: punkt === undefined ? -1 : punkt,
       // 0 = Hüllenpunkt, 1…n = gerechnete Schale, −1 = Stamm oder Achse
-      schale: schale === undefined ? -1 : schale
+      schale: schale === undefined ? -1 : schale,
+      // Wie weit draußen dieser Knoten sitzt, 0 = Stamm, 1 = Hülle. Gezählt
+      // wird in Schalen und nicht in Metern: der Verlauf soll dem Astwerk
+      // folgen und nicht dem Abstand zur Mitte — ein kurzer Ast durchläuft ihn
+      // auf seiner Länge ebenso ganz wie ein langer. Der Stamm und die
+      // innerste Schale stehen beide auf 0; der Farbwechsel fängt dort an,
+      // wo sich das Holz das erste Mal teilt.
+      tiefe: (schale === undefined || schale < 0) ? 0
+             : (schalen > 0 ? (schalen - schale) / schalen : 1),
+      // Gestrichen: hängt nicht mehr am Baum, siehe unten.
+      weg: false
     });
     return nd.length - 1;
   }
@@ -690,6 +722,34 @@ export function baueSkelett(cfg, huelle){
     }
     front = naechste;
   }
+  // --- Die inneren Knoten als Attraktoren ------------------------------------
+  // Sie bekommen ihre Nummer gleich hier, hinter den Hüllenpunkten, und zwar
+  // unabhängig davon, ob „Innen leer“ angehakt ist. Denn die Nummer bedeutet
+  // jetzt zweierlei: an ihr hängt das Billboard, das dort stehen kann, und an
+  // ihr hängt der Strich, mit dem sich der ganze Ast von hier nach außen
+  // entfernen lässt. Das eine soll nicht am anderen kleben — ein Baum ohne
+  // inneres Laub muss sich genauso beschneiden lassen wie einer mit.
+  //
+  // Genommen werden allein die Knoten der Schalen, nicht die Punkte der
+  // Segmentunterteilung: die sitzen auf demselben Ast wie ihre Nachbarn und
+  // brächten nichts als doppeltes Laub an derselben Stelle. Die Nummern der
+  // Hüllenpunkte bleiben davor unverändert, damit von Hand versetzte oder
+  // gelöschte Billboards weiter auf denselben Punkt zeigen.
+  //
+  // Ob dort ein Billboard hängt, sagt `sichtbar`: angehakt trägt allein die
+  // Hülle welche und die Krone ist eine Schale, abgehakt bekommen auch die
+  // inneren eines — dichter und blickdichter, aber je Knoten ein Rechteck mehr.
+  {
+    const ae = cfg.aenderungen || {};
+    for (const i of innenKnoten){
+      const nr = H.punkte.length;
+      nd[i].punkt = nr;
+      H.punkte.push(new V(nd[i].pos.x, nd[i].pos.y, nd[i].pos.z));
+      H.aussen.push(false);
+      H.sichtbar.push(!cfg.huelle.innenLeer && !(ae[nr] && ae[nr].weg));
+    }
+  }
+
   // Was nach der letzten Schale übrig ist, sind die Gesamt-Äste: die Stränge,
   // die am Stamm ansetzen. Angeschlossen werden sie erst, wenn ihre Höhe
   // feststeht.
@@ -898,6 +958,10 @@ export function baueSkelett(cfg, huelle){
       // bekäme jeder Zwischenpunkt die Stärke seines Kindes, und aus der
       // gleichmäßigen Verjüngung würde eine Treppe.
       nd[j].r = rA + (rB - rA) * t;
+      // Und ebenso die Tiefe: sonst spränge die Holzfarbe am ersten
+      // Zwischenpunkt auf den Wert des äußeren Endes, statt über das ganze
+      // Segment hinweg überzugehen.
+      nd[j].tiefe = nd[p].tiefe + (nd[c].tiefe - nd[p].tiefe) * t;
       nd[j].parent = vor;
       if (vor === p) nd[p].children[nd[p].children.indexOf(c)] = j;
       else nd[vor].children.push(j);
@@ -1098,35 +1162,98 @@ export function baueSkelett(cfg, huelle){
     }
   }
 
+  // --- Gestrichene Äste ------------------------------------------------------
+  // Ein von Hand markierter Attraktor bekommt kein Holz mehr. Gestrichen wird
+  // ganz zuletzt, wenn der Baum fertig dasteht: für die Gruppenbildung von
+  // außen nach innen zählt der Punkt voll mit wie jeder andere, und Stärke,
+  // Schwerkraft und Knorrigkeit sind hier längst gerechnet. Ohne das rückte
+  // mit jedem Strich die halbe Krone um — die Nachbarn suchten sich neue
+  // Gruppen, und die Nummern der Hüllenpunkte zeigten hinterher anderswohin.
+  //
+  // So aber ist ein Strich das, was er sein soll: es fällt etwas weg, und
+  // sonst ändert sich nichts. Auch die Stärke nicht — der Stamm bleibt so
+  // dick, wie er war, genau wie an einem Baum, der einen Ast verloren hat.
+  //
+  // Gekappt wird in der Gegenrichtung zum Bauen, von innen nach außen: vom
+  // markierten Punkt geht nichts mehr zur Hülle. An einem Hüllenpunkt ist das
+  // genau das eine Segment, das dort endet; an einem inneren Attraktor ist es
+  // der ganze Ast, der von ihm aus nach außen weitergeht, mit allem, was daran
+  // hängt. Damit hat der Strich an jeder Stelle dieselbe Bedeutung — je weiter
+  // innen, desto größer das Stück.
+  //
+  // Und nach innen fällt mit, was allein noch zu dem Gestrichenen führte — ein
+  // Segment ohne Ziel wäre ein Stummel, und Stummel gibt es an einem Baum
+  // nicht. Wo noch ein zweiter Zweig hängt, bleibt das Holz stehen.
+  //
+  // Der Stamm samt Achse bleibt in jedem Fall: er trägt den Baum, auch wenn
+  // über ihm nichts mehr hängt.
+  //
+  // Der Knoten wird nicht aus der Liste genommen, sondern beidseitig
+  // abgehängt — die Nummern der übrigen sollen sich nicht verschieben. Was
+  // danach kommt, läuft vom Wurzelknoten aus über `children` oder prüft den
+  // Elter auf −1; beides findet ihn dann nicht mehr.
+  let gestrichen = 0;
+  {
+    const ae = cfg.aenderungen || {};
+    // Alles nach außen: der Knoten selbst und sein ganzer Teilbaum.
+    const nachAussen = i => {
+      const st = [i];
+      while (st.length){
+        const k = st.pop();
+        if (nd[k].weg) continue;
+        nd[k].weg = true; gestrichen++;
+        for (const c of nd[k].children){ nd[c].parent = -1; st.push(c); }
+        nd[k].children.length = 0;
+      }
+    };
+    // Und nach innen, solange nichts anderes mehr daran hängt.
+    const nachInnen = e => {
+      while (e >= 0 && !nd[e].stammPfad && !nd[e].children.length && !nd[e].weg){
+        nd[e].weg = true; gestrichen++;
+        const v = nd[e].parent;
+        if (v >= 0){
+          const q = nd[v].children.indexOf(e);
+          if (q >= 0) nd[v].children.splice(q, 1);
+          nd[e].parent = -1;
+        }
+        e = v;
+      }
+    };
+    const loese = i => {
+      const e = nd[i].parent;
+      if (e >= 0){
+        const q = nd[e].children.indexOf(i);
+        if (q >= 0) nd[e].children.splice(q, 1);
+        nd[i].parent = -1;
+      }
+      nachAussen(i);
+      nachInnen(e);
+    };
+    for (let i = 0; i < nd.length; i++)
+      if (nd[i].punkt >= 0 && !nd[i].weg
+          && ae[nd[i].punkt] && ae[nd[i].punkt].astWeg) loese(i);
+  }
+
   // --- Die Hüllenpunkte nachziehen -------------------------------------------
   // Jeder Hüllenpunkt sitzt auf einem Knoten. Verzerrt wurde das Gerüst, und
   // die Punktwolke muss mit — sonst hingen die Billboards neben ihren Zweigen.
   for (const k of nd) if (k.punkt >= 0) H.punkte[k.punkt].copy(k.pos);
 
-  // --- Innen leer ------------------------------------------------------------
-  // Angehakt trägt allein die Hülle Billboards, und die Krone ist eine Schale.
-  // Abgehakt bekommen auch die gerechneten Knoten im Inneren eines — die Krone
-  // wird dichter und blickdichter, kostet aber je Knoten ein weiteres Rechteck.
-  //
-  // Genommen werden nur die Knoten der Schalen, nicht die Punkte der
-  // Segmentunterteilung: die sitzen auf demselben Ast wie ihre Nachbarn und
-  // brächten nichts als doppeltes Laub an derselben Stelle. Die Nummern der
-  // Hüllenpunkte bleiben dabei unverändert, damit von Hand versetzte oder
-  // gelöschte Billboards weiter auf denselben Punkt zeigen.
-  if (!cfg.huelle.innenLeer){
-    const ae = cfg.aenderungen || {};
-    for (const i of innenKnoten){
-      const nr = H.punkte.length;
-      H.punkte.push(new V(nd[i].pos.x, nd[i].pos.y, nd[i].pos.z));
-      H.aussen.push(false);
-      const weg = !!(ae[nr] && ae[nr].weg);
-      H.sichtbar.push(!weg);
-      if (!weg) H.sichtbarAnzahl++;
-    }
-  }
+  // --- Wo kein Holz mehr steht, hängt auch kein Blatt -------------------------
+  // Ein Strich nimmt nicht nur den markierten Punkt mit, sondern alles, was
+  // von ihm aus nach außen ging. Deshalb wird hier über die Knoten gegangen
+  // und nicht über die Markierungen: an einem inneren Attraktor fallen auf
+  // einen Strich hin ein Dutzend Billboards, und die stehen nirgends
+  // aufgeschrieben.
+  for (const k of nd)
+    if (k.punkt >= 0 && k.weg) H.sichtbar[k.punkt] = false;
+  H.sichtbarAnzahl = 0;
+  for (let i = 0; i < H.sichtbar.length; i++)
+    if (H.sichtbar[i]) H.sichtbarAnzahl++;
 
   let hoehe = 0, spitzen = 0;
   for (const k of nd){
+    if (k.weg) continue;
     if (k.pos.y > hoehe) hoehe = k.pos.y;
     if (!k.children.length) spitzen++;
   }
@@ -1139,7 +1266,10 @@ export function baueSkelett(cfg, huelle){
   return {
     knoten: nd, huelle: H, wurzelR: wurzelR, segLen: H.abstand,
     stats: {
-      knoten: nd.length, spitzen: spitzen, innen: innen,
+      knoten: nd.length - gestrichen, spitzen: spitzen, innen: innen,
+      // Wie viele Knoten das Streichen gekostet hat — der markierte Punkt
+      // selbst und alles, was allein noch zu ihm führte.
+      gestrichen: gestrichen,
       // Wie viele Punkte tatsächlich je Knoten zusammengekommen sind. Das ist
       // stets etwas weniger als eingestellt: gegen Ende einer Schale findet
       // nicht mehr jeder Punkt genug Nachbarn in Reichweite.
@@ -1163,7 +1293,7 @@ export function baueSkelett(cfg, huelle){
 //  steckt der Ansatzring im Elternast, statt als Kragen herauszustehen.
 // =============================================================================
 
-export function baueHolz(skel){
+export function baueHolz(skel, cfg){
   const nodes = skel.knoten;
   const wurzelR = skel.wurzelR;
 
@@ -1197,11 +1327,54 @@ export function baueHolz(skel){
     }
   }
 
-  const pos = [], nrm = [], col = [], uvs = [], idx = [];
+  const pos = [], nrm = [], col = [], tfe = [], uvs = [], idx = [];
   // Die Vertexfarbe trägt nur den Hell-dunkel-Verlauf: Zweig heller als Stamm.
   // Der Farbton selbst sitzt im Material und ist damit ohne Neuaufbau des
   // Baums umstellbar — genau wie die Rindentextur.
+  //
+  // Seit es zwei Farben sind, kommt ein zweites Attribut dazu: `tiefe`, 0 am
+  // Stamm und 1 an der Hülle. Danach mischt das Material zwischen Stamm- und
+  // Hüllenfarbe (siehe holzMaterial). Auch das gehört in die Geometrie und
+  // nicht in die Farbe selbst — sonst müsste ein Farbwechsel das ganze Holz
+  // neu aufbauen, und ein Aufruf ohne Konfiguration bekäme stillschweigend
+  // die falsche Farbe statt gar keiner.
+  const zw = (cfg && cfg.holz) || STANDARD.holz;
   const schatten = r => 1 + 0.85 * (1 - Math.min(1, Math.sqrt(r / wurzelR)));
+
+  // --- Verschmelzen mit dem Laub ---------------------------------------------
+  // Was einen Zweig vor der Krone heraustreten lässt, ist nicht seine Farbe,
+  // sondern seine Schattierung: über eine drei Zentimeter dicke Röhre läuft
+  // der volle Hell-dunkel-Verlauf von der Licht- zur Schattenseite, und auf
+  // wenigen Bildpunkten Breite liest sich das als harte Linie. Die Billboards
+  // daneben haben nichts dergleichen — sie bekommen als Normale schlicht die
+  // Richtung vom Kronenmittelpunkt nach außen (siehe baueBillboards).
+  //
+  // Genau dorthin wird die Zweignormale gedreht, und zwar nach derselben Tiefe
+  // wie die Farbe: am Stamm bleibt sie die der Röhre, ganz außen ist sie die
+  // der Krone. Ein Zweig an der Hülle wird damit vom selben Licht gleich
+  // beschienen wie das Blatt neben ihm — die Röhre verschwindet als Röhre,
+  // ohne dass ein Punkt sich bewegt hätte.
+  //
+  // Es ist keine Materialeinstellung, sondern eine der Geometrie, und das ist
+  // der Vorteil: es wirkt mit jedem Material, kostet zur Laufzeit nichts und
+  // gilt im Spiel genauso wie hier.
+  //
+  // Der Stamm bleibt unberührt — er soll rund aussehen, er ist keine Krone.
+  const kroneY = (skel.huelle && skel.huelle.mitte) || 0;
+  const misch  = cl(num(zw.verschmelzung, 0), 0, 100) / 100;
+  const legeNormale = (nx, ny, nz, px, py, pz, w) => {
+    if (w > 1e-4){
+      const ay = py - kroneY;
+      const al = Math.hypot(px, ay, pz);
+      // Genau im Kronenmittelpunkt gibt es kein Außen. Dort bleibt die Röhre.
+      if (al > 1e-6){
+        nx += (px/al - nx) * w; ny += (ay/al - ny) * w; nz += (pz/al - nz) * w;
+        const l = Math.hypot(nx, ny, nz);
+        if (l > 1e-6){ nx /= l; ny /= l; nz /= l; }
+      }
+    }
+    nrm.push(nx, ny, nz);
+  };
   const nVec = new V(), bVec = new V(), tVec = new V(), pVec = new V();
   const t0 = new V(), tL = new V(), eVec = new V();
 
@@ -1216,6 +1389,9 @@ export function baueHolz(skel){
 
     const pts = kette.map(i => nodes[i].pos);
     const rad = kette.map(i => nodes[i].r);
+    // Die Tiefe je Ring: 0 am Stamm, 1 an der Hülle. Ältere Skelette haben sie
+    // nicht — dort steht überall 0, und es bleibt bei der Stammfarbe.
+    const tie = kette.map(i => nodes[i].tiefe || 0);
 
     // Der Fuß unter die Null-Ebene. Knoten 0 sitzt genau auf −STAMM_UNTER_NULL;
     // angehängt wird ein zusätzlicher, etwas breiterer Ring darunter — das gibt
@@ -1227,6 +1403,7 @@ export function baueHolz(skel){
         dn.y = Math.max(dn.y, 0.5); dn.normalize();
         pts.unshift(new V().copy(pts[0]).addScaledVector(dn, -STAMM_UNTER_NULL / dn.y));
         rad.unshift(rad[0] * STAMM_ANLAUF);
+        tie.unshift(tie[0]);
       }
     }
 
@@ -1287,14 +1464,17 @@ export function baueHolz(skel){
       if (nVec.lengthSq() < 1e-10) perpendicular(tVec, nVec); else nVec.normalize();
       bVec.crossVectors(tVec, nVec).normalize();
 
-      const r = rad[i], f = schatten(r);
+      const r = rad[i], f = schatten(r), tf = tie[i];
+      const wf = misch * tf;
       for (let k=0;k<=seg;k++){
         const ang = (k / seg) * Math.PI * 2;
         const ca = Math.cos(ang), sa = Math.sin(ang);
         pVec.set(nVec.x*ca + bVec.x*sa, nVec.y*ca + bVec.y*sa, nVec.z*ca + bVec.z*sa);
-        pos.push(p.x + pVec.x*r, p.y + pVec.y*r, p.z + pVec.z*r);
-        nrm.push(pVec.x, pVec.y, pVec.z);
+        const px = p.x + pVec.x*r, py = p.y + pVec.y*r, pz = p.z + pVec.z*r;
+        pos.push(px, py, pz);
+        legeNormale(pVec.x, pVec.y, pVec.z, px, py, pz, wf);
         col.push(f, f, f);
+        tfe.push(tf);
         uvs.push(k / seg, vAcc);
       }
     }
@@ -1306,18 +1486,26 @@ export function baueHolz(skel){
 
     // Enden schließen. Eine Röhre ohne Deckel ist eine offene Hülse: die
     // Rückseiten werden nicht gezeichnet, man blickt von außen hindurch.
-    const pA = pts[0], rA = rad[0], fA = schatten(rA);
+    const pA = pts[0], rA = rad[0], fA = schatten(rA), tA = tie[0];
     const cA = pos.length / 3;
-    pos.push(pA.x - t0.x*rA*0.25, pA.y - t0.y*rA*0.25, pA.z - t0.z*rA*0.25);
-    nrm.push(-t0.x, -t0.y, -t0.z); col.push(fA, fA, fA); uvs.push(0.5, 0);
+    const aX = pA.x - t0.x*rA*0.25, aY = pA.y - t0.y*rA*0.25,
+          aZ = pA.z - t0.z*rA*0.25;
+    pos.push(aX, aY, aZ);
+    legeNormale(-t0.x, -t0.y, -t0.z, aX, aY, aZ, misch * tA);
+    col.push(fA, fA, fA); tfe.push(tA);
+    uvs.push(0.5, 0);
     for (let k=0;k<seg;k++) idx.push(cA, basis+k+1, basis+k);
 
-    const pB = pts[L-1], rB = rad[L-1], fB = schatten(rB);
+    const pB = pts[L-1], rB = rad[L-1], fB = schatten(rB), tB = tie[L-1];
     const letzter = basis + (L-1)*stride;
     const cB = pos.length / 3;
     const kappe = auslauf ? 1.4 : 0;
-    pos.push(pB.x + tL.x*rB*kappe, pB.y + tL.y*rB*kappe, pB.z + tL.z*rB*kappe);
-    nrm.push(tL.x, tL.y, tL.z); col.push(fB, fB, fB); uvs.push(0.5, vAcc);
+    const bX = pB.x + tL.x*rB*kappe, bY = pB.y + tL.y*rB*kappe,
+          bZ = pB.z + tL.z*rB*kappe;
+    pos.push(bX, bY, bZ);
+    legeNormale(tL.x, tL.y, tL.z, bX, bY, bZ, misch * tB);
+    col.push(fB, fB, fB); tfe.push(tB);
+    uvs.push(0.5, vAcc);
     for (let k=0;k<seg;k++) idx.push(cB, letzter+k, letzter+k+1);
   }
 
@@ -1325,6 +1513,7 @@ export function baueHolz(skel){
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   geo.setAttribute('normal',   new THREE.Float32BufferAttribute(nrm, 3));
   geo.setAttribute('color',    new THREE.Float32BufferAttribute(col, 3));
+  geo.setAttribute('tiefe',    new THREE.Float32BufferAttribute(tfe, 1));
   geo.setAttribute('uv',       new THREE.Float32BufferAttribute(uvs, 2));
   geo.setIndex(idx);
   geo.computeBoundingSphere();
@@ -1338,25 +1527,27 @@ export function baueHolz(skel){
 //  PNG. Damit kommt die ganze Krone mit einem Zeichenaufruf aus, ohne Atlas und
 //  damit ohne die Farbränder, die ein Atlas beim Verkleinern bekommt.
 //
-//  Jedes Bild wird beim Laden auf seine Alpha-Bounding-Box beschnitten und
-//  mittig in eine quadratische Schicht gesetzt. Dadurch sitzt das Motiv exakt
-//  auf seinem Eckpunkt — die Bilder dürfen also ruhig einen breiten leeren Rand
-//  haben und müssen nicht zentriert sein.
+//  Jedes Bild kommt so in seine Schicht, wie es hochgeladen wurde: nur auf die
+//  Schichtgröße gebracht und mittig gesetzt, ohne Zuschnitt. Was am Bildrand
+//  leer ist, bleibt leer.
+//
+//  Beschnitten wurde früher auf die Alpha-Bounding-Box, und das war falsch
+//  herum gedacht: alle Rechtecke hängen gleich groß im Baum, ein Motiv mit
+//  wenigen Blättern in der Bildmitte wurde durch den Zuschnitt also
+//  aufgeblasen, bis seine paar Blätter so breit standen wie das vollgepackte
+//  Nachbarbild. Der leere Rand im Bild ist eine Angabe des Zeichners und keine
+//  Verschwendung — er sagt, wie viel Platz das Motiv einnehmen soll.
 // =============================================================================
 
 // Freier Rand einer Schicht, damit die Mipmaps das Motiv nicht anschneiden —
 // als Anteil der Kantenlänge, damit er bei 512 nicht zur Haarlinie wird.
 const RAND_ANTEIL = 6 / 256;
-const LAGEN   = ['unten', 'mitte', 'oben'];
 
 // Ersatzbilder aus der Zeit vor der Namenskonvention. Sie greifen nur, wenn
-// {name}-{lage}-{nr}.png nicht ladbar ist — dann steht wenigstens etwas da,
-// statt dass der Baum kahl bleibt.
-const ERSATZ = {
-  unten: ['img/unten1.png', 'img/unten2.png'],
-  mitte: ['img/seite1.png', 'img/seite2.png', 'img/seite3.png'],
-  oben:  ['img/oben.png']
-};
+// {name}-{nr}.png nicht ladbar ist — dann steht wenigstens etwas da, statt
+// dass der Baum kahl bleibt.
+const ERSATZ = ['img/seite1.png', 'img/seite2.png', 'img/seite3.png',
+                'img/unten1.png', 'img/unten2.png', 'img/oben.png'];
 
 function ladeBild(url){
   return new Promise((ok, fehl) => {
@@ -1368,47 +1559,30 @@ function ladeBild(url){
   });
 }
 
-// Alpha-Bounding-Box messen und das Motiv freigestellt in eine Schicht setzen.
-// Zurück kommen die Bildpunkte der Schicht und das Seitenverhältnis des Motivs.
+// Das Bild ungeschnitten in eine quadratische Schicht setzen: so skaliert,
+// dass die längere Bildseite den Platz zwischen den Rändern ausfüllt, und
+// mittig. Ein quadratisches Bild — der Normalfall — landet damit unverändert
+// darin, nur um den Randstreifen verkleinert.
+//
+// Zurück kommen die Bildpunkte der Schicht und die Weltkantenlänge des
+// Rechtecks. Sie ist so gerechnet, dass die Bild*breite* MASS misst: ein hohes
+// Bild bekommt ein entsprechend größeres Quadrat, statt dass sein Motiv
+// gestaucht würde.
 function inSchicht(img, SCHICHT, MASS){
-  const RAND = Math.round(SCHICHT * RAND_ANTEIL);
-  const mess = document.createElement('canvas');
-  const S = 96;
-  mess.width  = S;
-  mess.height = Math.max(1, Math.round(S * img.height / img.width));
-  const mc = mess.getContext('2d', { willReadFrequently: true });
-  mc.drawImage(img, 0, 0, mess.width, mess.height);
-  const d = mc.getImageData(0, 0, mess.width, mess.height).data;
-
-  let x0 = mess.width, y0 = mess.height, x1 = -1, y1 = -1;
-  for (let y=0;y<mess.height;y++)
-    for (let x=0;x<mess.width;x++)
-      if (d[(y*mess.width + x)*4 + 3] > 25){
-        if (x < x0) x0 = x; if (x > x1) x1 = x;
-        if (y < y0) y0 = y; if (y > y1) y1 = y;
-      }
-  if (x1 < 0){ x0 = 0; y0 = 0; x1 = mess.width-1; y1 = mess.height-1; }
-
-  // Zurück in die Maße des Originals
-  const sx = img.width / mess.width, sy = img.height / mess.height;
-  const bx = x0 * sx, by = y0 * sy;
-  const bw = Math.max(1, (x1 - x0 + 1) * sx), bh = Math.max(1, (y1 - y0 + 1) * sy);
+  const RAND  = Math.round(SCHICHT * RAND_ANTEIL);
+  const platz = SCHICHT - 2 * RAND;
+  const iw = Math.max(1, img.width), ih = Math.max(1, img.height);
 
   const c = document.createElement('canvas');
   c.width = c.height = SCHICHT;
   const ctx = c.getContext('2d', { willReadFrequently: true });
-  const platz = SCHICHT - 2*RAND;
-  const f = platz / Math.max(bw, bh);
-  const dw = bw * f, dh = bh * f;
-  ctx.drawImage(img, bx, by, bw, bh, (SCHICHT-dw)/2, (SCHICHT-dh)/2, dw, dh);
+  const f = platz / Math.max(iw, ih);
+  const dw = iw * f, dh = ih * f;
+  ctx.drawImage(img, 0, 0, iw, ih, (SCHICHT-dw)/2, (SCHICHT-dh)/2, dw, dh);
 
   return {
-    daten:  ctx.getImageData(0, 0, SCHICHT, SCHICHT).data,
-    // Die Schicht ist quadratisch, also ist auch das Rechteck quadratisch.
-    // Seine Weltkantenlänge folgt daraus, dass die Motivbreite MOTIV messen
-    // soll: bei einem hohen Motiv wird das Quadrat entsprechend größer.
-    kante:  MASS * (SCHICHT / platz) * Math.max(1, bh / bw),
-    hoch:   bh / bw
+    daten: ctx.getImageData(0, 0, SCHICHT, SCHICHT).data,
+    kante: MASS * (SCHICHT / platz) * Math.max(1, ih / iw)
   };
 }
 
@@ -1428,8 +1602,8 @@ export function ladeBillboardSatz(cfg, basis){
   // Das Paket gehört in den Schlüssel: zwei Bäume gleichen Namens, einer mit
   // eingebetteten Schichten und einer ohne, sind nicht derselbe Satz.
   const eingebettet = cfg.paket && cfg.paket.billboards;
-  const key = (basis || './') + '|' + cfg.name + '|' + b.unten + '|' + b.mitte
-            + '|' + b.oben + '|' + b.aufloesung + '|' + b.groesse
+  const key = (basis || './') + '|' + cfg.name + '|' + b.varianten
+            + '|' + b.aufloesung + '|' + b.groesse
             + '|' + (eingebettet
                      ? 'paket' + eingebettet.schichten.length + ':'
                        + (eingebettet.schichten[0] || '').length
@@ -1446,40 +1620,34 @@ async function baueBillboardSatz(cfg, basis){
   if (cfg.paket && cfg.paket.billboards) return ausPaket(cfg.paket.billboards);
   const SCHICHT = anz.aufloesung;      // Kantenlänge einer Schicht
   const MASS    = anz.groesse;         // Motivbreite in Metern
+  // Ein Satz, eine Namensreihe: {name}-1.png, {name}-2.png, … Welches Bild wo
+  // in der Krone landet, entscheidet der Zufall — eine Zuordnung nach der Höhe
+  // gibt es nicht mehr.
   const jobs = [];
-  for (const lage of LAGEN)
-    for (let n=1; n<=anz[lage]; n++){
-      const pfad = basis + 'img/' + cfg.name + '-' + lage + '-' + n + '.png';
-      const alt  = ERSATZ[lage];
-      jobs.push(
-        ladeBild(pfad).then(im => ({ lage, im, ersatz: false }))
-          .catch(() => ladeBild(basis + alt[(n-1) % alt.length])
-                        .then(im => ({ lage, im, ersatz: true })))
-          .catch(() => ({ lage, im: null, ersatz: false }))
-      );
-    }
+  for (let n = 1; n <= anz.varianten; n++){
+    const pfad = basis + 'img/' + cfg.name + '-' + n + '.png';
+    jobs.push(
+      ladeBild(pfad).then(im => ({ im, ersatz: false }))
+        .catch(() => ladeBild(basis + ERSATZ[(n-1) % ERSATZ.length])
+                      .then(im => ({ im, ersatz: true })))
+        .catch(() => ({ im: null, ersatz: false }))
+    );
+  }
   const geladen = (await Promise.all(jobs)).filter(x => x.im);
   if (!geladen.length) return null;
 
   const tiefe = geladen.length;
   const daten = new Uint8Array(SCHICHT * SCHICHT * 4 * tiefe);
-  const sorten = { unten: [], mitte: [], oben: [] };
   const rechteck = [];
   for (let i=0;i<geladen.length;i++){
     const s = inSchicht(geladen[i].im, SCHICHT, MASS);
     daten.set(s.daten, i * SCHICHT * SCHICHT * 4);
-    sorten[geladen[i].lage].push(i);
     rechteck.push(s.kante);
   }
-  // Eine Lage ohne eigenes Bild leiht sich die Nachbarlage, sonst fehlten dort
-  // die Billboards ganz.
-  if (!sorten.mitte.length) sorten.mitte = sorten.unten.concat(sorten.oben);
-  if (!sorten.unten.length) sorten.unten = sorten.mitte.slice();
-  if (!sorten.oben.length)  sorten.oben  = sorten.mitte.slice();
 
   const tex = machArrayTextur(daten, SCHICHT, tiefe);
 
-  return { textur: tex, sorten: sorten, rechteck: rechteck,
+  return { textur: tex, rechteck: rechteck, anzahl: tiefe,
            ersatz: geladen.filter(x => x.ersatz).length,
            material: billboardMaterial(tex, false),
            materialInstanz: billboardMaterial(tex, true),
@@ -1547,14 +1715,12 @@ function bbVertex(instanziert){ return /* glsl */`
   }`; }
 
 function billboardMaterial(tex, instanziert){
-  const m = new THREE.RawShaderMaterial({
+  return new THREE.RawShaderMaterial({
     glslVersion: THREE.GLSL3,
     uniforms: {
       uKarte:   { value: tex },
       uFarbe:   { value: new THREE.Color(1, 1, 1) },
-      uSchnitt: { value: 0.5 },
-      // Ob am Ende nach sRGB umgerechnet wird - siehe unten bei onBeforeRender.
-      uSRGB:    { value: 1 }
+      uSchnitt: { value: 0.5 }
     },
     vertexShader: bbVertex(instanziert),
     fragmentShader: /* glsl */`
@@ -1563,7 +1729,6 @@ function billboardMaterial(tex, instanziert){
       uniform sampler2DArray uKarte;
       uniform vec3  uFarbe;
       uniform float uSchnitt;
-      uniform float uSRGB;
       in vec2  vUv;
       in float vSchicht;
       in float vLicht;
@@ -1600,9 +1765,7 @@ function billboardMaterial(tex, instanziert){
         // Gamma-Korrektur für die Ausgabe
         // lin *= vLicht * vLicht * vLicht * vLicht;
         lin *= vLicht;
-        // NUR AUF DEN BILDSCHIRM WIRD UMGERECHNET, NICHT IN EIN RENDERZIEL.
-        // Warum, steht unten beim Aufruf onBeforeRender.
-        ausgabe = vec4(uSRGB > 0.5 ? pow(lin, vec3(1.0 / 2.2)) : lin, 1.0);
+        ausgabe = vec4(pow(lin, vec3(1.0 / 2.2)), 1.0);
 /*
         vec3 ton = uFarbe * vTon;
         vec3 lin = pow(t.rgb, vec3(2.2));
@@ -1617,35 +1780,6 @@ function billboardMaterial(tex, instanziert){
     transparent: false,
     depthWrite: true
   });
-
-  // DAS MATERIAL FRAGT SELBST, WOHIN GEZEICHNET WIRD.
-  //
-  // Ein RawShaderMaterial bekommt von three nichts angehaengt - es gibt ein
-  // fertiges Bild ab, und deshalb rechnet der Fragmentshader oben selbst nach
-  // sRGB um. Auf den Bildschirm ist das richtig.
-  //
-  // In ein RENDERZIEL ist es falsch. Dorthin schreiben alle gewoehnlichen
-  // Materialien LINEAR - three haengt die Umrechnung nur an, wenn wirklich auf
-  // den Bildschirm gezeichnet wird. Ein Ziel, in dem die Krone schon in sRGB
-  // steht und alles andere linear, ist in sich widerspruechlich; wer es
-  // hinterher als Ganzes umrechnet - der Wasserspiegel tut das -, jagt das Laub
-  // ZWEIMAL durch die Kurve.
-  //
-  // Was das anrichtet, sieht man genau an der Kontrastspreizung im
-  // Vertexshader (`vLicht` hoch acht): ein dunkles Blatt bei linear 0,25 wird
-  // einmal umgerechnet zu 0,53 und ein zweites Mal zu 0,75, waehrend ein helles
-  // bei 1,0 stehen bleibt. Aus einem Verhaeltnis von 4:1 wird eines von 1,3:1 -
-  // die Krone verliert im Spiegelbild ihre Tiefe und wirkt ausgewaschen. Die
-  // Tafeln in der Ferne zeigten den Fehler nicht: sie sind ein gewoehnliches
-  // MeshBasicMaterial und werden von three richtig behandelt.
-  //
-  // three ruft `onBeforeRender` je Zeichenaufruf auf, und zwar VOR dem
-  // Hochladen der Uniformen. Das Material entscheidet also selbst und braucht
-  // von niemandem gesagt zu bekommen, dass gerade gespiegelt wird.
-  m.onBeforeRender = (renderer) => {
-    m.uniforms.uSRGB.value = renderer.getRenderTarget() === null ? 1 : 0;
-  };
-  return m;
 }
 
 // Tiefenmaterial für den Schattendurchgang. Ohne es rechnet three mit seinem
@@ -1682,8 +1816,8 @@ async function ausPaket(p){
     daten.set(ctx.getImageData(0, 0, S, S).data, i * S * S * 4);
   }
   const tex = machArrayTextur(daten, S, bilder.length);
-  return { sorten: JSON.parse(JSON.stringify(p.sorten)),
-           rechteck: p.rechteck.slice(), textur: tex, ersatz: 0,
+  return { rechteck: p.rechteck.slice(), anzahl: bilder.length,
+           textur: tex, ersatz: 0,
            material: billboardMaterial(tex, false),
            materialInstanz: billboardMaterial(tex, true),
            aufloesung: S, groesse: p.groesse };
@@ -1720,7 +1854,7 @@ export async function packe(cfg, satz, schatten, karte, ansicht){
     }
     paket.billboards = {
       aufloesung: S, groesse: satz.groesse,
-      sorten: satz.sorten, rechteck: satz.rechteck, schichten: schichten
+      rechteck: satz.rechteck, schichten: schichten
     };
   }
   // Die Rinde als Datenadresse. Steht schon eine darin, wird sie übernommen;
@@ -1751,10 +1885,9 @@ async function alsDatenadresse(url){
 }
 
 // --- Netz --------------------------------------------------------------------
-// Vier Vertices je Eckpunkt der Hülle. Welche Lage ein Punkt bekommt, hängt
-// allein an seiner Höhe in der Krone — dieselbe Einteilung wie in index.html.
-const OBEN_AB  =  0.5;
-const UNTEN_AB = -0.5;
+// Vier Vertices je Attraktor. Welches der Bilder ein Punkt bekommt, entscheidet
+// allein der Zufall — alle Vorlagen stehen gleichberechtigt nebeneinander, es
+// gibt keine Einteilung nach der Höhe in der Krone mehr.
 const ZITTER   = 0.04;      // leichte Unregelmäßigkeit, Anteil vom Abstand
 
 // opt.schatten schaltet den Schattenwurf der Krone an. Er kostet einen zweiten
@@ -1769,11 +1902,9 @@ export function baueBillboards(skel, cfg, satz, opt){
   const ae = cfg.aenderungen || {};
   const zus = cfg.zusatz || [];
 
-  // Welche Lage ein Billboard bekommt: nach der Höhe in der Krone, es sei
-  // denn, sie steht von Hand fest.
-  const lageVon = (y, e) => (e && e.lage) ? LAGEN[e.lage - 1]
-    : (((y - H.mitte) / Math.max(1e-6, H.radiusY)) >= OBEN_AB ? 'oben'
-      : (((y - H.mitte) / Math.max(1e-6, H.radiusY)) <= UNTEN_AB ? 'unten' : 'mitte'));
+  // Wie viele Bilder der Satz hergibt. Sie stehen alle gleichberechtigt
+  // nebeneinander — welches wohin kommt, entscheidet allein der Zufall.
+  const anz = Math.max(1, satz.anzahl || satz.rechteck.length);
 
   // Erst die Liste, dann die Puffer. Zwei Quellen laufen darin zusammen: die
   // Hüllenpunkte und die von Hand eingefügten Billboards. Die Kennung ist für
@@ -1788,18 +1919,15 @@ export function baueBillboards(skel, cfg, satz, opt){
     const w = rnd(), jx = rnd()-0.5, jy = rnd()-0.5, jz = rnd()-0.5;
     if (!sicht[q]) continue;
     const p = pts[q], a = ae[q];
-    const lage = lageVon(p.y, a);
-    const menge = satz.sorten[lage];
     // Die Bildnummer wird gewürfelt, es sei denn, sie steht von Hand fest.
     // Von Hand zählt sie ab 1 und wird umgebrochen: dreht man die Zahl der
     // Varianten später herunter, zeigt die Wahl dann wieder auf ein Bild, das
     // es gibt, statt das Billboard verschwinden zu lassen.
-    const nr = (a && a.tex) ? (a.tex - 1) % menge.length
-                            : Math.floor(w * menge.length) % menge.length;
+    const nr = (a && a.tex) ? (a.tex - 1) % anz
+                            : Math.floor(w * anz) % anz;
     // Versatz von Hand kommt zuletzt dazu — er verschiebt allein das Bild,
     // nicht den Knoten, an dem der Ast endet.
-    liste.push({ id: q, punkt: q, lage: lage, nr: nr, anz: menge.length,
-                 schicht: menge[nr],
+    liste.push({ id: q, punkt: q, nr: nr, anz: anz, schicht: nr,
                  x: p.x + jx * H.abstand * ZITTER + (a ? a.x : 0),
                  y: p.y + jy * H.abstand * ZITTER + (a ? a.y : 0),
                  z: p.z + jz * H.abstand * ZITTER + (a ? a.z : 0),
@@ -1810,13 +1938,9 @@ export function baueBillboards(skel, cfg, satz, opt){
     const e = zus[m];
     if (e.von >= pts.length) continue;      // Vorlage gibt es nicht mehr
     const p = pts[e.von];
-    const y = p.y + e.y;
-    const lage = lageVon(y, e);
-    const menge = satz.sorten[lage];
-    const nr = (e.tex ? (e.tex - 1) : 0) % menge.length;
-    liste.push({ id: -(m + 1), punkt: e.von, lage: lage, nr: nr,
-                 anz: menge.length, schicht: menge[nr],
-                 x: p.x + e.x, y: y, z: p.z + e.z,
+    const nr = (e.tex ? (e.tex - 1) : 0) % anz;
+    liste.push({ id: -(m + 1), punkt: e.von, nr: nr, anz: anz, schicht: nr,
+                 x: p.x + e.x, y: p.y + e.y, z: p.z + e.z,
                  dreh: e.dreh, spieg: !!e.spieg, skal: (e.skal || 100) / 100 });
   }
 
@@ -1824,8 +1948,8 @@ export function baueBillboards(skel, cfg, satz, opt){
   // punkt und seine halbe Kantenlänge. Damit trifft ein Mausklick genau das,
   // was der Vertexshader aufspannt — ohne dass die Geometrie es verraten
   // könnte, denn dort stehen alle vier Ecken auf dem Ankerpunkt. Dazu die
-  // Lage und die gezeigte Bildnummer samt ihrer Obergrenze, damit der Editor
-  // ohne eigene Kenntnis des Satzes anzeigen kann, was dort hängt.
+  // gezeigte Bildnummer samt ihrer Obergrenze, damit der Editor ohne eigene
+  // Kenntnis des Satzes anzeigen kann, was dort hängt.
   const anker = [];
 
   const n = liste.length;
@@ -1856,7 +1980,7 @@ export function baueBillboards(skel, cfg, satz, opt){
     const w = b.dreh * Math.PI / 180, cw = Math.cos(w), sw = Math.sin(w);
     const u0 = b.spieg ? 1 : 0, u1 = b.spieg ? 0 : 1;
     anker.push({ i: b.id, punkt: b.punkt, x: b.x, y: b.y, z: b.z, h: h,
-                 lage: b.lage, nr: b.nr + 1, anz: b.anz });
+                 nr: b.nr + 1, anz: b.anz });
     // v ist umgedreht: die Schichtdaten beginnen bei der obersten Bildzeile,
     // die Texturkoordinate v = 0 zeigt aber auf genau diese Zeile.
     const eck = [[-h,-h,u0,1], [h,-h,u1,1], [h,h,u1,0], [-h,h,u0,0]];
@@ -1907,15 +2031,52 @@ export function leereHolzCache(){
   holzCache.clear();
 }
 
+// Den Farbverlauf in ein gewöhnliches Lambert-Material einbauen.
+//
+// Eine Farbe kann ein Material tragen, zwei nicht — und deshalb stand die
+// Mischung eine Zeitlang in der Vertexfarbe. Das war ein schlechter Tausch:
+// jeder Farbwechsel baute das Holz neu auf, und wer baueHolz() ohne die
+// Konfiguration aufrief, bekam nicht etwa keine Farbe, sondern stillschweigend
+// die falsche. Der Stamm war dann fast schwarz, und man suchte den Fehler im
+// Licht.
+//
+// Jetzt bleibt es beim Alten: `color` ist die Stammfarbe, die Vertexfarbe ist
+// der Hell-dunkel-Verlauf. Dazu kommen zwei Zeilen im Shader — die Hüllenfarbe
+// als Uniform und das Attribut `tiefe` aus der Geometrie, und zwischen beiden
+// Farben wird gemischt, ehe Rinde und Hell-dunkel darauf multiplizieren.
+//
+// Fehlt einer Geometrie das Attribut, liest es sich als null: dann steht
+// überall die Stammfarbe, und nichts geht kaputt.
+function holzVerlauf(m, farbeHuelle){
+  const ton = new THREE.Color(farbeHuelle);
+  m.onBeforeCompile = sh => {
+    sh.uniforms.uHuelle = { value: ton };
+    sh.vertexShader = 'attribute float tiefe;\nvarying float vTiefe;\n'
+      + sh.vertexShader.replace('void main() {', 'void main() {\n\tvTiefe = tiefe;');
+    sh.fragmentShader = 'uniform vec3 uHuelle;\nvarying float vTiefe;\n'
+      + sh.fragmentShader.replace(
+          'vec4 diffuseColor = vec4( diffuse, opacity );',
+          'vec4 diffuseColor = vec4( mix( diffuse, uHuelle, vTiefe ), opacity );');
+  };
+  // Ohne eigenen Schlüssel könnte three das übersetzte Programm mit einem
+  // fremden Lambert-Material gleicher Bauart verwechseln — der Quelltext geht
+  // in seinen Cache nicht ein, die Parameter schon.
+  m.customProgramCacheKey = () => 'holzverlauf';
+  return m;
+}
+
 export function holzMaterial(cfg, basis){
   const z = cfg.holz;
   // Liegt die Rinde im Paket, gilt sie — dann braucht es die Datei nicht mehr.
   const bild = (cfg.paket && cfg.paket.rinde) || z.textur;
-  const key = z.farbe + '|' + bild + '|' + z.kachel + '|' + (basis || './');
+  const huelle = z.farbeHuelle || z.farbe;
+  const key = z.farbe + '|' + huelle + '|' + bild + '|' + z.kachel
+            + '|' + (basis || './');
   let m = holzCache.get(key);
   if (m) return m;
 
-  m = new THREE.MeshLambertMaterial({ color: new THREE.Color(z.farbe), vertexColors: true });
+  m = holzVerlauf(new THREE.MeshLambertMaterial({
+    color: new THREE.Color(z.farbe), vertexColors: true }), huelle);
   if (bild){
     const url = /^(data:|https?:|\/)/.test(bild) ? bild : (basis || './') + bild;
     new THREE.TextureLoader().load(url, tex => {
@@ -2494,9 +2655,11 @@ export async function baueAnsicht(skel, cfg, satz, opt){
         ok(t);
       }, undefined, () => ok(null)));
   }
-  const holzMat = new THREE.MeshLambertMaterial({
-    color: new THREE.Color(c.holz.farbe), vertexColors: true, map: rindeTex });
-  const holz = new THREE.Mesh(baueHolz(skel), holzMat);
+  // Derselbe Verlauf wie in holzMaterial(), nur mit der schon geladenen Rinde.
+  const holzMat = holzVerlauf(new THREE.MeshLambertMaterial({
+    color: new THREE.Color(c.holz.farbe), vertexColors: true, map: rindeTex }),
+    c.holz.farbeHuelle || c.holz.farbe);
+  const holz = new THREE.Mesh(baueHolz(skel, c), holzMat);
   szene.add(holz);
   if (netz) szene.add(netz);
 
@@ -2646,7 +2809,7 @@ export async function erzeugeBaum(cfg, opt){
   const grp = new THREE.Group();
   grp.name = c.name;
 
-  const holz = new THREE.Mesh(baueHolz(skel), holzMaterial(c, basis));
+  const holz = new THREE.Mesh(baueHolz(skel, c), holzMaterial(c, basis));
   holz.name = 'holz';
   grp.add(holz);
 
@@ -2691,7 +2854,7 @@ export async function erzeugeBaumInstanzen(cfg, anzahl, opt){
   const grp = new THREE.Group();
   grp.name = c.name;
 
-  const holz = new THREE.InstancedMesh(baueHolz(skel), holzMaterial(c, basis), n);
+  const holz = new THREE.InstancedMesh(baueHolz(skel, c), holzMaterial(c, basis), n);
   holz.name = 'holz';
   grp.add(holz);
 

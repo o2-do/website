@@ -171,7 +171,9 @@ async function baueBauplan(datei) {
   const basis = teile.length ? `${teile.join('/')}/` : './';
 
   const skel = baueSkelett(cfg);
-  const holzGeo = baueHolz(skel);
+  // cfg gehoert dazu: die Farben holt sich das Material, aber "Verschmelzen"
+  // dreht die Normalen und steckt damit in der Geometrie.
+  const holzGeo = baueHolz(skel, cfg);
   const holzMat = holzMaterial(cfg, basis);
 
   const satz = await ladeBillboardSatz(cfg, basis);

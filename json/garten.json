@@ -1,7 +1,7 @@
 {
   "typ": "gartensimulator",
   "version": 1,
-  "gespeichert": "2026-08-25T19:06:06.468Z",
+  "gespeichert": "2026-08-26T09:47:09.198Z",
   "werte": {
     "seed": "garten-lvq8o8",
     "maxNeigung": 40,
@@ -45,8 +45,9 @@
     "blattTon": 100,
     "blattStreuung": 25,
     "zaun": true,
-    "zaunFelder": 5,
     "bordstein": true,
+    "gelaender": true,
+    "gelaenderAb": 28,
     "schriftGroesse": 0.12,
     "schildRand": 0.05,
     "schildMitteHoehe": 1.3,
@@ -68,6 +69,7 @@
     "anzahlBeete": 24,
     "beetAbstandMin": 0.3,
     "beetAbstandMax": 0.5,
+    "see": "mit See",
     "teichDurchmesser": 5,
     "wasserQualitaet": "spiegel",
     "wasserToenung": 0,
