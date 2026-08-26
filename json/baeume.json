@@ -1,7 +1,8 @@
 {
   "beschreibung": "Bestandsliste fuer den Gartensimulator. Jeder Eintrag unter 'baeume' bekommt einen eigenen Baum und ein Schild davor; 'ton' faerbt seine Blaetter ein (#rrggbb oder [r,g,b] um 1.0 herum) und darf fehlen. Alle uebrigen Baumplaetze werden aus 'standard' besetzt - dort duerfen mehrere Dateien stehen, dann wird je Platz zufaellig (aber ueber den Startwert reproduzierbar) eine davon gewaehlt. 'beete' sind die Vorlagen aus dem Beetkonfigurator; welche Pflanzen darauf stehen, sagt seit Fassung 2 das Beet selbst - eine eigene Pflanzenliste braucht es hier nicht mehr.",
   "standard": [
-    "baum.json"
+    "baum.json",
+    "buche.json"
   ],
   "beete": [
     "beet1.json",
@@ -11,11 +12,7 @@
   ],
   "baeume": [
     {
-      "name": "Herr Baumgärtner",
-      "baum": "eiche.json"
-    },
-    {
-      "name": "Dirk",
+      "name": "große Eiche",
       "baum": "eiche_gross.json"
     }
   ]

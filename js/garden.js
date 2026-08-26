@@ -347,9 +347,11 @@ export async function buildGarden(cfg, tex, onProgress = () => {}) {
   stats.zaun = zaun.stats || { pfosten: 0, quer: 0, umfang: 0, radius: 0 };
   // Der Bordstein ebenso: vier Zentimeter hoch, in der Aufsicht also nichts als
   // eine Linie auf der Kante, die der runde Ausschnitt schon zieht.
+  /*
   const bord = buildBordstein(cfg, hf, tex.bordstein, sektoren, tor);
   for (const m of bord) { m.userData.nurAugenhoehe = true; group.add(m); }
   stats.bordstein = bord.stats || null;
+  */
   // Und die Gelaender an den steilen Stellen neben den Wegen. Sie gehoeren zum
   // Zaunwerk, stehen aber am Weg - in der Karte deshalb ebenfalls draussen.
   const gelaender = buildGelaender(planeGelaender(paths, hf, cfg), cfg, tex.pfosten, sektoren);

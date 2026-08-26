@@ -110,7 +110,7 @@ export const SCHEMA = [
   { group: 'Zaun', key: 'zaun', label: 'Zaun um den Garten', type: 'checkbox', default: true },
   // Die Schwelle zwischen den Torsaeulen - sie deckt die Stossfuge der beiden
   // Zugangswege ab (siehe `buildBordstein` in `zaun.js`).
-  { group: 'Zaun', key: 'bordstein', label: 'Schwelle im Tor', type: 'checkbox', default: false },
+  { group: 'Zaun', key: 'bordstein', label: 'Schwelle im Tor', type: 'checkbox', default: true },
   // GELAENDER STATT ZAUN: dieselben Pfosten und Querhoelzer, aber am Weg statt
   // an der Grenze. Gesetzt werden sie dort, wo es neben dem Weg steil bergab
   // geht - das ist am Gartenrand die Regel, weil dort die Boeschung keinen

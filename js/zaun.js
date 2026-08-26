@@ -463,97 +463,12 @@ const BORD_KACHEL = 1.5;
 /**
  * DIE SCHWELLE ZWISCHEN DEN TORSAEULEN.
  *
- * Hier lief einmal ein Bordstein rings um den ganzen Garten. Den zieht jetzt
- * wieder der Zaun; geblieben ist das eine Stueck, das wirklich etwas zu tun
- * hat: Der Zugang besteht aus ZWEI Wegen - drinnen der, der zum Rundweg
- * fuehrt, draussen der, der ins Freie laeuft -, und die stossen im Tor
- * aneinander. Zwei Baender, die sich beruehren, zeigen dort eine Fuge und
- * einen Sprung in der Kachelung. Die Schwelle legt sich darueber.
- *
- * Sie reicht von Saeulenmitte zu Saeulenmitte; ihre Enden verschwinden dadurch
- * im Holz und muessen nicht sauber anschliessen. Und sie ist nur zwei
- * Zentimeter hoch - man soll ueber sie treten, nicht an ihr haengenbleiben.
- *
- * DREI FLAECHEN, KEINE SEITEN: vorn hinauf, oben hinueber, hinten hinunter.
- * Die Oberseite liegt waagerecht auf der hoeheren der beiden Saeulen - eine
- * Schwelle ist gegossen, nicht gewachsen.
+ * Die Schwelle läuft quer zum Weg und reicht von einer Tor-säule zur anderen,
+ * um die Stoßkante zwischen dem Weg außerhalb des Gartens und innerhalb des
+ * Gartens zu verdecken. (Entfernt)
  */
 export function buildBordstein(cfg, hf, textur, sektoren, tor) {
-  if (!cfg.bordstein || !tor) return [];
-  const A = { x: tor.a.x, z: tor.a.z };
-  const B = { x: tor.b.x, z: tor.b.z };
-  const laenge = Math.hypot(B.x - A.x, B.z - A.z);
-  if (laenge < 0.5) return [];
-
-  // Laengs von Saeule zu Saeule, quer dazu die Breite.
-  const lx = (B.x - A.x) / laenge, lz = (B.z - A.z) / laenge;
-  const qx = -lz, qz = lx;
-  const halb = BORD_B / 2;
-  // DIE HOEHE KOMMT VOM WEG, NICHT VON DEN SAEULEN.
-  //
-  // Hier stand die groessere der beiden Gelaendehoehen an den Torsaeulen - und
-  // die stehen zwei Meter seitlich, also NEBEN dem Weg. Der Weg liegt dort
-  // knapp drei Zentimeter tiefer als die Wiese daneben (er liegt quer
-  // waagerecht, das Gelaende nicht), und die Schwelle stand dadurch nicht zwei
-  // Zentimeter ueber dem Pflaster, sondern viereinhalb. Aus Augenhoehe sieht
-  // man von einem so flachen Stein fast nur seine senkrechte Vorderwange, und
-  // die bekommt von einer hochstehenden Sonne kaum Licht: gemessen 66 gegen
-  // 178 bis 201 ringsum - ein schwarzer Strich quer ueber den Weg.
-  //
-  // Von der Wegmitte genommen steht sie ueber dem Pflaster genau ihre zwei
-  // Zentimeter. Wo sie seitlich ueber die Wegkante hinausreicht, verschwindet
-  // sie in der etwas hoeheren Wiese - fuer eine Schwelle im Durchgang ist
-  // genau das richtig.
-  const oben = hf.heightAt(tor.mitte.x, tor.mitte.z) + BORD_H;
-  const unten = oben - BORD_H - BORD_FUSS;
-
-  // Vier Ecken im Grundriss: vorn/hinten je Saeule.
-  const ecke = (p, s) => [p.x + qx * halb * s, p.z + qz * halb * s];
-  const [avx, avz] = ecke(A, +1), [ahx, ahz] = ecke(A, -1);
-  const [bvx, bvz] = ecke(B, +1), [bhx, bhz] = ecke(B, -1);
-
-  // Die Lage auf dem Profil, als Weg quer ueber den Stein - daraus kommt die
-  // zweite Texturkoordinate, damit die Maserung ueber die Kanten weiterlaeuft.
-  const hoch = BORD_H + BORD_FUSS;
-  const vVU = 0, vVO = hoch, vHO = hoch + BORD_B, vHU = 2 * hoch + BORD_B;
-
-  const pos = [], uv = [], idx = [];
-  const punkt = (x, y, z, u, v) => {
-    pos.push(x, y, z); uv.push(u / BORD_KACHEL, v / BORD_KACHEL);
-    return pos.length / 3 - 1;
-  };
-  const flaeche = (p1, p2, p3, p4) => idx.push(p1, p2, p3, p1, p3, p4);
-
-  const aVU = punkt(avx, unten, avz, 0, vVU);
-  const aVO = punkt(avx, oben,  avz, 0, vVO);
-  const aHO = punkt(ahx, oben,  ahz, 0, vHO);
-  const aHU = punkt(ahx, unten, ahz, 0, vHU);
-  const bVU = punkt(bvx, unten, bvz, laenge, vVU);
-  const bVO = punkt(bvx, oben,  bvz, laenge, vVO);
-  const bHO = punkt(bhx, oben,  bhz, laenge, vHO);
-  const bHU = punkt(bhx, unten, bhz, laenge, vHU);
-  flaeche(aVU, aVO, bVO, bVU);      // vorn
-  flaeche(aVO, aHO, bHO, bVO);      // oben
-  flaeche(aHO, aHU, bHU, bHO);      // hinten
-
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
-  geo.setIndex(idx);
-  geo.computeVertexNormals();
-  geo.computeBoundingSphere();
-
-  const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
-    map: textur, roughness: 0.95, metalness: 0,
-    wireframe: cfg.drahtgitter,
-  }));
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
-  mesh.name = 'torschwelle';
-
-  const meshes = [mesh];
-  meshes.stats = { laenge: +laenge.toFixed(2), hoehe: BORD_H, breite: BORD_B };
-  return meshes;
+  
 }
 
 /* ---------------- Das Tor bauen ---------------- */
