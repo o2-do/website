@@ -226,6 +226,50 @@ export function buildMapMask(cfg, material) {
 }
 
 /**
+ * DIE GRAUE UNTERLAGE.
+ *
+ * Wo zwei Grundflaechen aneinanderstossen - Weg an Wiese, Wiese an Wasser -,
+ * bleibt trotz gemeinsamer Punkte hier und da ein Haarriss von einem
+ * Bildpunkt: Rundungsfehler in der Rasterung, nicht in der Geometrie. Ganz
+ * vermeiden laesst sich das nicht.
+ *
+ * Was man dabei SIEHT, ist die Himmelskugel: sie wird als Erstes gezeichnet,
+ * ohne Tiefe zu schreiben, und liegt damit hinter allem. Unten ist sie fast
+ * weiss (#ccddff), und genau das blitzt durch die Risse - hell, und deshalb
+ * fallen sie auf.
+ *
+ * Eine Scheibe unter dem Garten nimmt ihr diesen Platz. Sie liegt tiefer als
+ * die tiefste Mulde, ist also nie fuer sich zu sehen; durch einen Riss blickt
+ * man aber immer nach unten, und dort steht dann Grau statt Himmel. Ein
+ * Zeichenaufruf und ein paar Dutzend Dreiecke, kein Aufwand je Bild - die
+ * Beleuchtung braucht sie nicht, sie soll ja nur eine Farbe sein.
+ */
+export function buildUnterlage(cfg, tiefe) {
+  // EIN QUADRAT REICHT. Sie ist keine Flaeche, die man ansieht, sondern eine
+  // Farbe hinter den Haarrissen - ihr Umriss spielt keine Rolle, solange sie
+  // ueberall dahinterliegt. Vorher war sie ein Faecher aus `randSegmente`
+  // Dreiecken um den Mittelpunkt; im Drahtgitter und aus der Vogelperspektive
+  // sah man nichts als diese Speichen.
+  const R = (cfg.durchmesser / 2) * 1.15;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(
+    [-R, 0, -R, R, 0, -R, R, 0, R, -R, 0, R], 3));
+  // Nach oben blickend - von unten sieht sie ohnehin niemand.
+  geo.setIndex([0, 2, 1, 0, 3, 2]);
+  geo.computeBoundingSphere();
+
+  const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0x666666 }));
+  mesh.position.y = -Math.max(0.5, tiefe);
+  mesh.name = 'unterlage';
+  // In der Karte schaut man von oben in den Garten; dort verdeckt die Wiese
+  // sie nicht ueberall, und ein grauer Teller unter dem Gelaende hilft
+  // niemandem. Die Haarrisse, gegen die sie gedacht ist, sieht man nur in
+  // Augenhoehe.
+  mesh.userData.nurAugenhoehe = true;
+  return mesh;
+}
+
+/**
  * Kasten unter dem Garten: eine senkrechte Wand rings um die Wiesenkante,
  * knapp unter ihr angesetzt und so tief, dass auch das tiefste Tal darueber
  * liegt.

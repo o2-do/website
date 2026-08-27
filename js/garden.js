@@ -1,13 +1,13 @@
 import * as THREE from 'three';
 import { hashSeed, stream } from './rng.js';
 import {
-  createHeightField, buildHorizon, buildMapMask, buildMapBox,
+  createHeightField, buildHorizon, buildMapMask, buildMapBox, buildUnterlage,
 } from './terrain.js';
 import { buildPaths, makePathIndex, torWeg, TOR_WEG_DRAUSSEN } from './paths.js';
 import {
   baueGartennetz, hoehenfeldAusNetz, baueWiese, baueWegband, baueAussenweg,
 } from './wegnetz.js';
-import { planSigns, buildSigns } from './signs.js';
+import { planSigns, buildSigns, planWegweiser, buildWegweiser } from './signs.js';
 import { createOccupancy } from './occupancy.js';
 import {
   createRockGeometries, planarUV, planRocks, buildRockMeshes, stempelFelsschatten,
@@ -15,16 +15,19 @@ import {
 import { planTrunks } from './trees.js';
 import { ladeBauplaene, baueBestand } from './baumbestand.js';
 import { createBodenkarte } from './bodenkarte.js';
+import { stempleNetzschatten } from './schattenriss.js';
 import {
   loadPlantModel, loadBed, pflanzenAusBeeten, planBeds, buildPlantMeshes,
   buildBedFloors, stempelPflanzenschatten,
 } from './plants.js';
 import { createSektoren } from './sektoren.js';
+import { KAMERA_FREI } from './scene.js';
 import {
   buildZaun, buildTor, buildBordstein, planTor, planeGelaender, buildGelaender,
 } from './zaun.js';
 import { ladeZypressen, planZypressen, baueZypressen, stempelZypressenschatten } from './zypressen.js';
 import { planeTeich, baueWasser } from './wasser.js';
+import { planeStufen, baueStufen } from './stufen.js';
 import {
   createBladeGeometry, planEdgeGrass, planPatchGrass, planTrunkGrass, buildGrassMeshes,
 } from './grass.js';
@@ -110,8 +113,9 @@ export async function buildGarden(cfg, tex, onProgress = () => {}) {
     fog: false,
     wireframe: cfg.drahtgitter,
   });
+  // Die Schilder gehoeren zum Aussenwerk: grau verwittert wie Zaun und Tor.
   const pfahlMat = new THREE.MeshStandardMaterial({
-    color: 0x997755,
+    map: tex.pfostenGrau,
     roughness: 1,
     metalness: 0,
     wireframe: cfg.drahtgitter,
@@ -187,9 +191,45 @@ export async function buildGarden(cfg, tex, onProgress = () => {}) {
     mesh.receiveShadow = true;
     group.add(mesh);
   });
+  // Treppen dort, wo der Rundweg zu steil wird. Sie liegen AUF dem Weg - das
+  // Netz darunter bleibt die Rampe.
+  const treppen = planeStufen(paths, hf, cfg);
+  const stufen = baueStufen(treppen, cfg, tex.granit, sektoren);
+  for (const m of stufen) group.add(m);
+  stats.stufen = stufen.stats || null;
+
   // Belegungsraster: wer zuerst platziert wird, sperrt seine Zellen.
   // Reihenfolge: Weg -> Baumstamm -> Fels -> Grasbueschel
   const occ = createOccupancy(hf.radius, cfg.rasterWeite);
+  // DAS ZWEITE RASTER: WAS DEN WEG VERSTELLT.
+  //
+  // Nicht dasselbe wie das Belegungsraster. Dort steht, wo nichts mehr HIN
+  // darf - Wege, Grasbueschel, Beete; hier steht, wo niemand DURCH darf.
+  // Wege gehoeren also gerade nicht hinein, Beete auch nicht (durch ein Beet
+  // laeuft man), Baumstaemme, Felsen, Zypressen, Wasser und Gelaender dagegen
+  // schon.
+  //
+  // Jedes Hindernis wird um den Halbmesser des Gehers AUFGEBLASEN eingetragen.
+  // Damit ist die Abfrage spaeter ein einziger Feldzugriff statt einer Suche
+  // ueber eine Kreisflaeche - und sie faellt sechzigmal je Sekunde an.
+  const hindernisse = createOccupancy(hf.radius, cfg.rasterWeite);
+
+  // ZWEI HALBMESSER, UND SIE MEINEN VERSCHIEDENES.
+  //
+  // `R_GEHER` ist der Koerper: so dicht darf man an etwas heran, ohne
+  // hineinzulaufen. `R_KAMERA` ist der Abstand, den das AUGE braucht. Die
+  // Near-Plane der Laufkamera steht bei 40 cm (siehe `scene.js`); alles, was
+  // naeher kommt, wird angeschnitten - und zwar am Bildrand zuerst, weil dort
+  // der Sehstrahl schraeg steht und die Tiefe entsprechend kleiner ist. Bei
+  // weitem Blickwinkel und breitem Fenster steht der Randstrahl gut 60 Grad
+  // schief; aus 0,4 m / cos 60 Grad wird knapp 0,9 m.
+  //
+  // Der weite Abstand gilt aber nur NEBEN dem Weg. Auf dem Weg zaehlt der
+  // Koerper - sonst schnuerte ein Fels, der bis an die Wegkante reicht, den Weg
+  // zu, und ein Gelaender machte ihn ganz unpassierbar. Dafuer steht die
+  // Wegflaeche im Hindernisraster (siehe `blockSanft` in `occupancy.js`).
+  const R_GEHER = 0.30;
+  const R_KAMERA = KAMERA_FREI;
   for (const p of paths) {
     const sm = p.samples;
     const segs = p.closed ? sm.length : sm.length - 1;
@@ -198,9 +238,21 @@ export async function buildGarden(cfg, tex, onProgress = () => {}) {
       const a = sm[i], b = sm[(i + 1) % sm.length];
       // Als WEG gekennzeichnet: die Felsen duerfen diese Zellen uebergehen,
       // wenn ihr eingestellter Abstand zur Wegkante negativ ist.
-      occ.blockSegment(a.x, a.z, b.x, b.z, halfW, true);
+      occ.blockSegment(a.x, a.z, b.x, b.z, halfW, 'weg');
+      hindernisse.blockSegment(a.x, a.z, b.x, b.z, halfW, 'weg');
     }
   }
+
+  /**
+   * Einen Gegenstand ins Hindernisraster eintragen - eng und weit.
+   *
+   * Eng ueberschreibt auch den Weg (durch einen Felsen laeuft man nicht,
+   * gleich wo er steht), weit macht an der Wegkante halt.
+   */
+  const sperre = (x, z, eigen) => {
+    hindernisse.block(x, z, eigen + R_GEHER);
+    hindernisse.blockSanft(x, z, eigen + R_KAMERA);
+  };
 
   // Der Tuempel sperrt seinen Platz, bevor Baeume, Felsen und Gras kommen -
   // samt Ufer, damit nichts halb im Wasser steht.
@@ -214,14 +266,17 @@ export async function buildGarden(cfg, tex, onProgress = () => {}) {
   tPhase = performance.now();
 
   onProgress('Wiese …');
-  const ground = baueWiese(netz.P, netz.wiese, cfg, wieseMat);
-  ground.receiveShadow = true;
-  group.add(ground);
+  // Ein Netz je Sektor (siehe `baueWiese`) - eine Viertelmillion Dreiecke
+  // Wiese waeren in einem Stueck nie aus dem Sichtvolumen zu werfen.
+  const grundNetze = baueWiese(netz.P, netz.wiese, cfg, wieseMat, sektoren);
+  for (const m of grundNetze) { m.receiveShadow = true; group.add(m); }
   // Die weite Horizontscheibe fuer die Augenperspektive; in der Karte deckt
   // stattdessen die weisse Maske alles ab, was ausserhalb des Kreises liegt.
   group.add(buildHorizon(cfg, wieseMat));
   group.add(buildMapMask(cfg, kastenMat));
   group.add(buildMapBox(cfg, kastenMat, hf.amplitude + 0.5));
+  // Grau statt Himmel hinter den Haarrissen der Grundflaechen.
+  group.add(buildUnterlage(cfg, base.tief + 0.5));
   phase('wiese');
   await nextFrame();
   tPhase = performance.now();
@@ -243,7 +298,9 @@ export async function buildGarden(cfg, tex, onProgress = () => {}) {
   const want = Math.max(Math.round(cfg.anzahlBaeume), liste.baeume.length);
   const trunks = planTrunks(paths, pathIndex, hf, cfg, occ, stammR, want);
 
-  const bestand = await baueBestand(cfg, liste, plaene, trunks, bodenkarte);
+  for (const t of trunks) sperre(t.x, t.z, stammR);
+
+  const bestand = await baueBestand(cfg, liste, plaene, trunks, bodenkarte, sektoren);
   group.add(bestand.group);
   const benannt = bestand.benannt;
 
@@ -260,6 +317,7 @@ export async function buildGarden(cfg, tex, onProgress = () => {}) {
   const zypSorten = await ladeZypressen(tex.zypresse);
   const zypressen = planZypressen(hf, cfg, pathIndex, occ, zypSorten);
   for (const m of baueZypressen(zypressen, zypSorten, sektoren)) group.add(m);
+  for (const b of zypressen) sperre(b.x, b.z, zypSorten[b.vorlage].radius);
   stats.zypressen = zypressen.length;
   stats.zypressenGruppen = zypressen.length / 3;
   phase('zypressen');
@@ -270,7 +328,10 @@ export async function buildGarden(cfg, tex, onProgress = () => {}) {
   const signs = planSigns(benannt, paths, pathIndex, hf, cfg);
   const signMeshes = buildSigns(signs, cfg, pfahlMat);
   if (signs.length) group.add(signMeshes.group);
+  const weiser = buildWegweiser(planWegweiser(paths, tor, pathIndex, hf, cfg), cfg, pfahlMat);
+  if (weiser) group.add(weiser);
   stats.schilder = signs.length;
+  stats.wegweiser = !!weiser;
   phase('schilder');
   await nextFrame();
   tPhase = performance.now();
@@ -282,7 +343,8 @@ export async function buildGarden(cfg, tex, onProgress = () => {}) {
   const placements = planRocks(hf, cfg, geos, pathIndex, occ);
   const rockMeshes = buildRockMeshes(geos, placements, felsMat, sektoren);
   for (const m of rockMeshes) group.add(m);
-  stempelFelsschatten(bodenkarte, placements);
+  for (const pl of placements) sperre(pl.x, pl.z, pl.radXZ);
+  stempelFelsschatten(bodenkarte, placements, geos, hf);
   stats.felsen = placements.length;
   phase('felsen');
   await nextFrame();
@@ -326,7 +388,8 @@ export async function buildGarden(cfg, tex, onProgress = () => {}) {
   // sie beim Aufbau des Bestandes schon einmal gefuellt.
   stats.pflanzenschatten = stempelPflanzenschatten(bodenkarte, beetPlan.stellen, modelle);
   stempelZypressenschatten(bodenkarte, zypressen, zypSorten);
-  bodenkarte.zeichne();
+  // Gezeichnet wird die Karte erst, wenn ALLES darin steht - Zaun, Tor und
+  // Gelaender kommen weiter unten noch dazu.
 
   stats.pflanzen = pAnzahl;
   stats.pflanzenArten = modelle.size;
@@ -339,7 +402,7 @@ export async function buildGarden(cfg, tex, onProgress = () => {}) {
   // Der Zaun steht auf der Gartenkante und stoert deshalb niemanden - er
   // braucht weder das Belegungsraster noch eine eigene Phase im Gelaende.
   onProgress('Zaun …');
-  const zaun = buildZaun(cfg, hf, tex.pfosten, sektoren, tor);
+  const zaun = buildZaun(cfg, hf, tex.pfostenGrau, sektoren, tor);
   // In der Karte bleibt der Zaun draussen: von oben ist er ein haarduenner
   // Ring am Rand, der wie eine Rahmenlinie wirkt und den runden Ausschnitt
   // doppelt. Der Garten endet dort ohnehin sichtbar.
@@ -352,14 +415,34 @@ export async function buildGarden(cfg, tex, onProgress = () => {}) {
   for (const m of bord) { m.userData.nurAugenhoehe = true; group.add(m); }
   stats.bordstein = bord.stats || null;
   */
-  // Und die Gelaender an den steilen Stellen neben den Wegen. Sie gehoeren zum
-  // Zaunwerk, stehen aber am Weg - in der Karte deshalb ebenfalls draussen.
-  const gelaender = buildGelaender(planeGelaender(paths, hf, cfg), cfg, tex.pfosten, sektoren);
+  // Und die Gelaender: an den steilen Stellen neben den Wegen, und AN JEDER
+  // TREPPE auf beiden Seiten. Eine angehobene Treppe steht mit ihren Wangen
+  // ueber dem Gelaende; das Gelaender erklaert diese Kante, statt dass der
+  // Boden daneben dafuer verbogen werden muesste.
+  const gelaenderLaeufe = planeGelaender(paths, hf, cfg, treppen);
+  const gelaender = buildGelaender(gelaenderLaeufe, cfg, tex.pfosten, sektoren);
+  // Das Gelaender ist eine Linie, kein Fleck - eingetragen wird es als Kapsel
+  // laengs jedes Laufs.
+  for (const lauf of gelaenderLaeufe) {
+    for (let k = 0; k + 1 < lauf.length; k++) {
+      const a = lauf[k], b = lauf[k + 1];
+      hindernisse.blockSegment(a.x, a.z, b.x, b.z, R_GEHER);
+      // Der weite Abstand greift nur nach aussen: zum Weg hin steht das
+      // Gelaender fuenf Zentimeter neben der Kante, dort bleibt es beim Koerper.
+      hindernisse.blockSegment(a.x, a.z, b.x, b.z, R_KAMERA, 'sanft');
+    }
+  }
   for (const m of gelaender) { m.userData.nurAugenhoehe = true; group.add(m); }
   stats.gelaender = gelaender.stats || null;
   // Das Tor bleibt in der Karte sichtbar: es ist der Zugang und damit eine
   // Angabe zur Anlage, nicht zur Bepflanzung.
-  for (const m of buildTor(cfg, hf, tex.pfosten, tor)) group.add(m);
+  const torTeile = buildTor(cfg, hf, tex.pfostenGrau, tor);
+  for (const m of torTeile) group.add(m);
+  // Zaun, Tor und Gelaender in die Bodenkarte - Teil fuer Teil, damit die
+  // Luecken zwischen Pfosten und Querhoelzern Luecken bleiben.
+  stats.zaunschatten = stempleNetzschatten(bodenkarte, [...zaun, ...torTeile, ...gelaender], hf);
+  // Jetzt steht alles darin: einmal zeichnen.
+  bodenkarte.zeichne();
   // Der Weg jenseits des Tors - eigenes Band, gleiche Breite, gleicher Belag.
   const draussen = baueAussenweg(cfg, hf, tor, TOR_WEG_DRAUSSEN, wegMat);
   if (draussen) group.add(draussen);
@@ -414,6 +497,24 @@ export async function buildGarden(cfg, tex, onProgress = () => {}) {
     : null;
   phase('wasser');
 
+  // Das Wasser: gesperrt wird, wo der Boden UNTER dem Spiegel liegt - also
+  // genau die nasse Flaeche. Ein Kreis waere zu grob; das Ufer soll begehbar
+  // bleiben, und es ist absichtlich nicht rund.
+  if (teich) {
+    const schritt = cfg.rasterWeite;
+    const w = teich.rScheibe;
+    for (let dx = -w; dx <= w; dx += schritt) {
+      for (let dz = -w; dz <= w; dz += schritt) {
+        if (dx * dx + dz * dz > w * w) continue;
+        const x = teich.x + dx, z = teich.z + dz;
+        if (hf.heightAt(x, z) >= teich.spiegel) continue;
+        hindernisse.block(x, z, R_GEHER);
+        hindernisse.blockSanft(x, z, R_KAMERA);
+      }
+    }
+  }
+  stats.hindernisse = Math.round((hindernisse.blockedCells / hindernisse.cells) * 100);
+
   stats.rasterBelegt = Math.round((occ.blockedCells / occ.cells) * 100);
 
   group.traverse((o) => {
@@ -433,7 +534,7 @@ export async function buildGarden(cfg, tex, onProgress = () => {}) {
 
   return {
     group, hf, paths, pathIndex, trunks, occ, bestand, bodenkarte, sektoren,
-    grasNetze, tor, wasser, teich,
+    grasNetze, tor, wasser, teich, hindernisse,
     signs: signMeshes.faces, signPlan: signs, stats,
   };
 }

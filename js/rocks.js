@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { stempleRiss } from './schattenriss.js';
 import { sonnenVersatz } from './baumloader.js';
 import { stream, rand, randInt } from './rng.js';
 import { makeNoise3D } from './noise.js';
@@ -209,27 +210,29 @@ export function buildRockMeshes(geometries, placements, material, sektoren) {
   return meshes;
 }
 
-/* ---------------- Pseudoschatten in die Bodenkarte ---------------- */
+/* ---------------- Der echte Schatten in die Bodenkarte ---------------- */
 
 /**
- * Fuer jeden Brocken ein weicher Kreis in der gemeinsamen Bodenkarte - leicht
- * gegen die Sonne versetzt, damit er zu Baum- und Pflanzenschatten passt.
+ * Fuer jeden Brocken sein wirklicher Umriss, laengs der Sonne auf den Boden
+ * geworfen (siehe `schattenriss.js`).
  *
- * Der Kreis ist eine Naeherung: der Umriss eines gedrehten Brockens ist kein
- * Kreis. Bei der Aufloesung der Karte (rund 18 px/m) ist ein halbmetriger
- * Brocken neun Bildpunkte breit - dort ist der Unterschied keiner.
+ * Hier stand einmal eine Ellipse - eine Naeherung, die bei neun Bildpunkten
+ * Breite keine war. Bei zwei Metern Brockengroesse und 4096er Karte ist sie
+ * eine: ein Findling ist kantig, und ein glatter Ovalfleck darunter sieht aus
+ * wie aufgeklebt. Die Huelle kostet je Brocken ein paar Dutzend Punkte.
  */
-export function stempelFelsschatten(bodenkarte, placements) {
+export function stempelFelsschatten(bodenkarte, placements, geometries, hf) {
   if (!bodenkarte) return 0;
+  let n = 0;
   for (const pl of placements) {
-    // Der Versatz gilt fuer die OBERKANTE; der Fuss liegt am Ort. Der Schatten
-    // reicht also von hier bis dorthin, und seine Mitte liegt auf halbem Weg.
+    const geo = geometries && geometries[pl.typeIndex];
+    if (geo && stempleRiss(bodenkarte, geo, pl.matrix, hf ? hf.heightAt(pl.x, pl.z) : 0)) { n++; continue; }
+    // Ohne Geometrie bleibt die alte Naeherung.
     const v = sonnenVersatz(pl.hoehe);
     const laenge = Math.hypot(v.x, v.z);
-    // Voll ausgesteuert wie jeder andere Stempel auch; abgeschwaecht wird
-    // erst bei der Anwendung (`SCHATTEN_STAERKE` in `bodenkarte.js`).
     bodenkarte.setzeEllipse(pl.x + v.x / 2, pl.z + v.z / 2,
                             pl.radXZ + laenge / 2, pl.radXZ, Math.atan2(v.z, v.x));
+    n++;
   }
-  return placements.length;
+  return n;
 }

@@ -19,7 +19,7 @@ import { bandPunkt } from './paths.js';
 // Masse in Metern. Sie stehen hier und nicht im Formular: ein Gartenzaun ist
 // ein Gartenzaun, und wer die Proportionen aendert, aendert nicht eine
 // Einstellung, sondern das Bauteil.
-const PFOSTEN_D = 0.10;          // Durchmesser Pfosten wie Querholz
+export const PFOSTEN_D = 0.10;          // Durchmesser Pfosten wie Querholz
 const PFOSTEN_H = 1.00;          // Hoehe ueber Grund
 const QUER_LAENGE = 2.00;        // Sollabstand zweier Pfosten
 const QUER_HOEHEN = [0.45, 0.95];
@@ -298,8 +298,10 @@ export function buildZaun(cfg, hf, textur, sektoren, tor) {
 
 /* ---------------- Gelaender an steilen Wegen ---------------- */
 
-// Wie weit die Pfostenmitte neben der Wegkante steht.
-const GELAENDER_AB_KANTE = 0.05;
+// Wie weit die Pfostenmitte neben der Wegkante steht. Exportiert, weil die
+// Treppen denselben Abstand brauchen - sonst versetzen sich die beiden
+// Gelaender dort, wo sie aneinanderstossen.
+export const GELAENDER_AB_KANTE = 0.05;
 // Wo das Gefaelle gemessen wird, gerechnet ab der Wegkante. Zwei Abstaende,
 // und der steilere gewinnt: dicht an der Kante hat die Boeschung den Absatz
 // schon abgefangen (siehe `boeschung` in `wegnetz.js`), erst dahinter zeigt
@@ -309,6 +311,15 @@ const GELAENDER_PROBEN = [1.2, 2.4];
 // Stuetzstellen hintereinander ergeben ein Gelaender - bei einem halben Meter
 // Abtastschritt sind das gut zwei Meter.
 const GELAENDER_MIN = 5;
+// Wie breit eine Luecke zwischen zwei Laeufen hoechstens sein darf, damit sie
+// zugemacht wird. Eine Treppe endet fast immer kurz vor oder kurz hinter der
+// steilen Stelle, die ohnehin ein Gelaender bekommt - dazwischen blieben sonst
+// ein, zwei Meter offen, und genau dort greift die Hand ins Leere.
+const GELAENDER_LUECKE = 3.0;
+// Wie weit neben der Mündung eines anderen Weges das Gelaender endet, gerechnet
+// ab dessen Kante. Ohne den Zuschlag stuende der letzte Pfosten genau in der
+// Ecke, in der die beiden Belaege zusammenstossen.
+const GELAENDER_MUENDUNG_FREI = 0.4;
 
 /**
  * WO ES NEBEN DEM WEG HINUNTERGEHT.
@@ -320,30 +331,102 @@ const GELAENDER_MIN = 5;
  * neben einem Weg, der nah daran vorbeifuehrt, bleibt kein Platz mehr fuer eine
  * Boeschung.
  *
+ * ZWEI GRUENDE, EIN GELAENDER. Es steht dort, wo es neben dem Weg steil
+ * hinuntergeht - und ueberall dort, wo eine Treppe liegt. Beides wird in
+ * DEMSELBEN Durchlauf entschieden, und das ist der Punkt: eine Treppe endet
+ * fast immer an einer steilen Stelle, und zwei getrennt geplante Gelaender
+ * stiessen dort mit einer Fuge aneinander. So entsteht ein einziger Lauf, der
+ * ueber die Treppe hinweg weiterlaeuft. Bleibt zwischen zwei Laeufen dennoch
+ * ein kurzes Stueck offen - die Treppe hoert einen Meter vor dem Abhang auf -,
+ * wird es zugemacht: siehe `GELAENDER_LUECKE`.
+ *
  * Gesucht wird je Stuetzstelle und Seite, gemessen wird das Gefaelle vom
  * Wegrand nach aussen. Was zusammenhaengt, wird zu einem Lauf gebuendelt -
- * einzelne steile Punkte ergeben kein Gelaender, sondern Zaunstummel.
+ * einzelne steile Punkte ergeben kein Gelaender, sondern Zaunstummel; wo eine
+ * Treppe liegt, entfaellt diese Mindestlaenge, denn eine Treppe braucht ihren
+ * Handlauf auch dann, wenn sie kurz ist.
  *
  * Zurueck kommen Laeufe von Pfostenplaetzen; jeder Platz traegt die Hoehe der
- * WEGKANTE und nicht die des Bodens neben ihm. Ein Gelaender folgt dem Weg,
- * nicht dem Abhang.
+ * WEGKANTE - und auf einer Treppe die des AUFTRITTS. Ein Gelaender folgt dem
+ * Weg, nicht dem Abhang, und auf einer Treppe der Treppe.
  */
-export function planeGelaender(paths, hf, cfg) {
+export function planeGelaender(paths, hf, cfg, treppen = []) {
   if (!cfg.gelaender) return [];
   const grenze = Math.tan((cfg.gelaenderAb * Math.PI) / 180);
   const laeufe = [];
 
+  // Die Stufen nach Weg greifbar machen. Nach dem Auslaufen der Endstufen kann
+  // eine Bogenlaenge ueber die Weglaenge hinausreichen oder negativ werden -
+  // beim Vergleich wird deshalb auch um eine Runde versetzt geprueft.
+  const jeWeg = new Map();
+  for (const t of treppen) {
+    if (!jeWeg.has(t.p.index)) jeWeg.set(t.p.index, []);
+    jeWeg.get(t.p.index).push(...t.stufen);
+  }
+  const stufeBei = (p, s) => {
+    const liste = jeWeg.get(p.index);
+    if (!liste) return null;
+    for (const st of liste) {
+      for (const versatz of (p.closed ? [0, p.total, -p.total] : [0])) {
+        const q = s + versatz;
+        if (q >= st.sVon && q <= st.sBis) return st;
+      }
+    }
+    return null;
+  };
+
+  /**
+   * MUENDET HIER EIN ANDERER WEG?
+   *
+   * Der Sonderfall, den das Gefaelle nicht sieht. Wo eine Abkuerzung auf den
+   * Rundweg trifft, ist die Stelle meist steil genug fuer ein Gelaender - aber
+   * dort geht man ja gerade hinueber. Das Gelaender muss deshalb AUFHOEREN,
+   * und zwar richtig: mit einem Pfosten auf jeder Seite der Oeffnung, nicht mit
+   * einem Querholz, das im Nichts endet.
+   *
+   * Gemessen wird vom Pfostenplatz zur Mittellinie des anderen Weges - liegt er
+   * auf dessen Belag (plus einem Zuschlag), ist hier Durchgang.
+   */
+  const muendungBei = (p, x, z) => {
+    for (const q of paths) {
+      if (q === p) continue;
+      const grenzeQ = q.width / 2 + GELAENDER_MUENDUNG_FREI;
+      const sm = q.samples;
+      const bis = q.closed ? sm.length : sm.length - 1;
+      for (let i = 0; i < bis; i++) {
+        const a = sm[i], b = sm[(i + 1) % sm.length];
+        const ex = b.x - a.x, ez = b.z - a.z;
+        const l2 = ex * ex + ez * ez || 1e-9;
+        let t = ((x - a.x) * ex + (z - a.z) * ez) / l2;
+        t = t < 0 ? 0 : t > 1 ? 1 : t;
+        const dx = x - (a.x + ex * t), dz = z - (a.z + ez * t);
+        if (dx * dx + dz * dz < grenzeQ * grenzeQ) return true;
+      }
+    }
+    return false;
+  };
+
   for (const p of paths) {
     const sm = p.samples;
     const halb = p.width / 2;
+    const n = sm.length;
     for (const sgn of [-1, 1]) {
-      let lauf = [];
-      const schliesse = () => {
-        if (lauf.length >= GELAENDER_MIN) laeufe.push(lauf);
-        lauf = [];
-      };
-      for (let k = 0; k < sm.length; k++) {
+      // ERST ENTSCHEIDEN, DANN BAUEN. Je Stuetzstelle wird vermerkt, ob dort
+      // ein Gelaender hingehoert und warum; gebuendelt wird hinterher. Nur so
+      // laesst sich eine Luecke ueberhaupt erkennen - im laufenden Sammeln
+      // waere sie schon geschlossen, bevor man wuesste, ob dahinter noch etwas
+      // kommt.
+      const braucht = new Array(n).fill(false);
+      const stufe = new Array(n).fill(null);
+      // Wo ein anderer Weg einmuendet, bleibt es offen - und zwar endgueltig:
+      // diese Stellen ueberspringt auch die Lueckenschliessung weiter unten.
+      const offen = new Array(n).fill(false);
+      for (let k = 0; k < n; k++) {
         const c = sm[k];
+        const pf = bandPunkt(p, k, sgn, halb + GELAENDER_AB_KANTE, 0);
+        if (muendungBei(p, pf.x, pf.z)) { offen[k] = true; continue; }
+        const st = stufeBei(p, c.s);
+        if (st) { braucht[k] = true; stufe[k] = st; continue; }
         // Die Wegkante liegt auf der Hoehe der Mittellinie - der Querschnitt
         // ist waagerecht, das ist das Prinzip des ganzen Netzes.
         const yKante = hf.heightAt(c.x, c.z);
@@ -353,9 +436,47 @@ export function planeGelaender(paths, hf, cfg) {
           const pz = c.z + c.nz * sgn * (halb + d);
           gefaelle = Math.max(gefaelle, (yKante - hf.heightAt(px, pz)) / d);
         }
-        if (gefaelle < grenze) { schliesse(); continue; }
+        braucht[k] = gefaelle >= grenze;
+      }
+
+      // Kurze Luecken zumachen: was auf beiden Seiten ein Gelaender hat und
+      // dazwischen nur wenige Meter frei laesst, wird durchgezogen.
+      for (let k = 0; k < n; k++) {
+        if (braucht[k]) continue;
+        let e = k;
+        while (e < n && !braucht[e]) e++;
+        const davor = k > 0 ? k - 1 : (p.closed ? n - 1 : -1);
+        const danach = e < n ? e : (p.closed ? 0 : -1);
+        let durchgang = false;
+        for (let i = k; i < e; i++) if (offen[i]) { durchgang = true; break; }
+        if (!durchgang && davor >= 0 && danach >= 0 && braucht[davor] && braucht[danach]) {
+          const bis = e < n ? sm[e].s : p.total;
+          if (bis - sm[k].s <= GELAENDER_LUECKE) for (let i = k; i < e; i++) braucht[i] = true;
+        }
+        k = e;
+      }
+
+      // Zu Laeufen buendeln. Beim geschlossenen Weg darf ein Lauf ueber die
+      // Naht hinweggehen - dort ist der Rundweg durchgehend, also soll es das
+      // Gelaender auch sein.
+      let start = 0;
+      if (p.closed && braucht[0] && braucht[n - 1]) {
+        while (start < n && braucht[start]) start++;
+        if (start >= n) start = 0; // alles rundherum: irgendwo anfangen
+      }
+      let lauf = [];
+      let mitTreppe = false;
+      const schliesse = () => {
+        if (lauf.length >= (mitTreppe ? 2 : GELAENDER_MIN)) laeufe.push(lauf);
+        lauf = [];
+        mitTreppe = false;
+      };
+      for (let i = 0; i < n; i++) {
+        const k = (start + i) % n;
+        if (!braucht[k]) { schliesse(); continue; }
+        if (stufe[k]) mitTreppe = true;
         const a = bandPunkt(p, k, sgn, halb + GELAENDER_AB_KANTE, 0);
-        lauf.push({ x: a.x, y: yKante, z: a.z });
+        lauf.push({ x: a.x, y: stufe[k] ? stufe[k].oben : hf.heightAt(sm[k].x, sm[k].z), z: a.z });
       }
       schliesse();
     }

@@ -20,6 +20,12 @@
  * die Unterscheidung haette das Raster genau das verhindert, waehrend die
  * exakte Abfrage es schon erlaubt hatte. Fuer alles andere aendert sich nichts:
  * ohne das Kennzeichen sperrt ein Weg wie eh und je.
+ *
+ * DASSELBE RASTER TRAEGT AUCH DIE HINDERNISSE DES GEHERS (siehe `garden.js`).
+ * Dort bedeutet die Unterscheidung etwas anderes: die Wegflaeche steht darin,
+ * damit der weite Abstand, den die Kamera zu einem Gegenstand halten soll, an
+ * der Wegkante endet - sonst schnuerte ein Fels, der bis an den Weg reicht,
+ * den Weg zu. `belegt` uebergeht die Wegzellen deshalb.
  */
 // Zellinhalt: 0 frei, 1 von einem Ding belegt, 2 von einem Weg.
 const DING = 1;
@@ -68,15 +74,44 @@ export function createOccupancy(radius, cell = 0.15) {
       forCircle(x, z, r, (k) => { if (!grid[k]) { grid[k] = WEG; blocked++; } });
     },
 
+    /**
+     * Sperren, ABER NUR WO NOCH NICHTS STEHT - ein Weg bleibt ein Weg.
+     *
+     * Damit laesst sich ein Ding zweimal eintragen: eng mit seinem koerperlichen
+     * Halbmesser (`block`, der ueberschreibt auch den Weg), und weit mit dem
+     * Abstand, den die Kamera braucht (hier). Der weite Ring endet dann an der
+     * Wegkante, statt einen Weg zuzuschnueren, an dem ein Fels steht.
+     */
+    blockSanft(x, z, r) {
+      forCircle(x, z, r, (k) => { if (!grid[k]) { grid[k] = DING; blocked++; } });
+    },
+
     /** Kapsel entlang einer Strecke sperren (fuer Wegbaender). */
-    blockSegment(ax, az, bx, bz, r, alsWeg = false) {
+    blockSegment(ax, az, bx, bz, r, wie = 'ding') {
       const len = Math.hypot(bx - ax, bz - az);
       const steps = Math.max(1, Math.ceil(len / (cell * 0.8)));
+      const setze = wie === true || wie === 'weg' ? this.blockWeg
+        : wie === 'sanft' ? this.blockSanft : this.block;
       for (let s = 0; s <= steps; s++) {
         const t = s / steps;
-        if (alsWeg) this.blockWeg(ax + (bx - ax) * t, az + (bz - az) * t, r);
-        else this.block(ax + (bx - ax) * t, az + (bz - az) * t, r);
+        setze.call(this, ax + (bx - ax) * t, az + (bz - az) * t, r);
       }
+    },
+
+    /**
+     * EIN Feldzugriff: steht an dieser Stelle etwas?
+     *
+     * Ohne Halbmesser und ohne Zuschlag - wer das benutzt, hat die Ausdehnung
+     * seines Gegenstands schon beim Eintragen aufgeschlagen. Genau dafuer ist
+     * das Hindernisraster gedacht, das der Geher sechzigmal je Sekunde fragt.
+     */
+    belegt(x, z) {
+      const i = idx(x), j = idx(z);
+      if (i < 0 || j < 0 || i >= n || j >= n) return false;
+      // NUR DINGE SPERREN. Eine Wegzelle steht im Raster, damit der weite
+      // Kameraabstand an ihr haltmacht (siehe `blockSanft`) - laufen darf man
+      // auf ihr selbstverstaendlich.
+      return grid[i * n + j] === DING;
     },
 
     /**

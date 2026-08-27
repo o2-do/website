@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { stempleRiss } from './schattenriss.js';
 import { frisch } from './frisch.js';
 import { stream, rand } from './rng.js';
 import { atArcLength } from './paths.js';
@@ -401,16 +402,24 @@ export function buildBedFloors(plaetze, hf, cfg, imGrund, sektoren) {
 export function stempelPflanzenschatten(bodenkarte, stellen, modelle) {
   if (!bodenkarte) return 0;
   let n = 0;
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion();
+  const ort = new THREE.Vector3(), gr = new THREE.Vector3();
+  const up = new THREE.Vector3(0, 1, 0);
   for (const [datei, liste] of stellen) {
     const model = modelle.get(datei);
     if (!model) continue;
     for (const s of liste) {
-      // `durchmesser` aus der Beetdatei ist schon skaliert; fehlt er (alte
-      // Datei), tut es der Grundriss aus der Pflanzendatei.
+      if (model.geometry) {
+        // Derselbe Platz wie beim Aufstellen (siehe `buildPlantMeshes`).
+        q.setFromAxisAngle(up, s.yaw);
+        m.compose(ort.set(s.x, s.y, s.z), q, gr.setScalar(s.scale));
+        if (stempleRiss(bodenkarte, model.geometry, m, s.y)) { n++; continue; }
+      }
+      // Ersatzweise der weiche Kreis. `durchmesser` aus der Beetdatei ist schon
+      // skaliert; fehlt er (alte Datei), tut es der Grundriss aus der
+      // Pflanzendatei.
       const d = s.durchmesser > 0 ? s.durchmesser : model.breite * s.scale;
       const v = sonnenVersatz(model.hoehe * s.scale * 0.5);
-      // Voll ausgesteuert wie jeder andere Stempel auch; abgeschwaecht wird
-      // erst bei der Anwendung (`SCHATTEN_STAERKE` in `bodenkarte.js`).
       bodenkarte.setzeKreis(s.x + v.x, s.z + v.z, d);
       n++;
     }

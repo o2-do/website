@@ -380,6 +380,49 @@ const tafelCache = new Map();
  * kennt keine einzeln sichtbaren Instanzen, aber die Grafikkarte verwirft eine
  * auf null skalierte, ehe ein Bildpunkt entsteht.
  */
+/**
+ * DIE TAFEL DARF SEITENVERKEHRT STEHEN.
+ *
+ * Ein Baum in der Ferne ist ein einziges gebackenes Bild; hundert davon sind
+ * hundertmal dasselbe Bild, und in einer Reihe faellt das auf. Gespiegelt ist
+ * es ein zweites Bild - ohne zweite Textur, ohne zweiten Zeichenaufruf.
+ *
+ * WIE ES OHNE MEHRAUFWAND GEHT: das Vorzeichen steckt in der Instanzmatrix.
+ * Der Tafel-Shader spannt das Rechteck aus dem Ankerpunkt auf und nimmt dafuer
+ * die LAENGE der ersten Matrixspalte - eine Laenge hat kein Vorzeichen, eine
+ * negative Breite blieb also wirkungslos. Hier wird daraus die Laenge MAL dem
+ * Vorzeichen von instanceMatrix[0].x. Kosten: ein Vergleich je Eckpunkt, und
+ * ein Rechteck hat vier.
+ *
+ * Der Griff sitzt bewusst hier und nicht im Baumkonfigurator: `baum-import.js`
+ * wird dort erzeugt und ueberschrieben. Findet sich die erwartete Zeile nicht
+ * (weil der Generator sie geaendert hat), bleibt alles beim Alten - dann stehen
+ * die Tafeln eben wieder alle gleich herum.
+ */
+function spiegelbar(material) {
+  if (!material || material.userData._spiegel) return material;
+  const vorher = material.onBeforeCompile;
+  const alt = 'mvPosition.xy += transformed.xy * tafelS;';
+  const neu = 'mvPosition.xy += vec2(transformed.x * (instanceMatrix[0].x < 0.0 ? -1.0 : 1.0),'
+            + ' transformed.y) * tafelS;';
+  material.onBeforeCompile = (sh, renderer) => {
+    if (vorher) vorher(sh, renderer);
+    if (sh.vertexShader.includes(alt)) sh.vertexShader = sh.vertexShader.replace(alt, neu);
+  };
+  // Ein anderes Programm braucht einen anderen Schluessel.
+  const vorherSchluessel = material.customProgramCacheKey;
+  material.customProgramCacheKey = () =>
+    (vorherSchluessel ? vorherSchluessel.call(material) : '') + '-spiegel';
+  // EINE GESPIEGELTE FLAECHE HAT UMGEKEHRTE WICKLUNG - und wurde deshalb als
+  // Rueckseite weggeschnitten: die Tafel verschwand einfach. Ein Rechteck, das
+  // sich ohnehin zur Kamera dreht, hat keine Rueckseite, die man je zu sehen
+  // bekaeme; beidseitig zu zeichnen kostet hier nichts.
+  material.side = THREE.DoubleSide;
+  material.userData._spiegel = true;
+  material.needsUpdate = true;
+  return material;
+}
+
 export async function baueTafeln(plan, anzahl) {
   const a = plan.paket.ansicht;
   if (!a || !a.bild) return null;
@@ -390,7 +433,7 @@ export async function baueTafeln(plan, anzahl) {
   const vorlage = await p;
   if (!vorlage) return null;
 
-  const netz = new THREE.InstancedMesh(vorlage.geometry, vorlage.material, n);
+  const netz = new THREE.InstancedMesh(vorlage.geometry, spiegelbar(vorlage.material), n);
   netz.name = `tafeln_${plan.name}`;
   netz.frustumCulled = false;          // die Tafel entsteht erst im Shader
   netz.castShadow = netz.receiveShadow = false;
@@ -401,9 +444,9 @@ export async function baueTafeln(plan, anzahl) {
   const dreh = new THREE.Quaternion();   // ohne Wirkung, die Tafel dreht sich selbst
   const m = new THREE.Matrix4();
 
-  netz.setze = (i, x, y, z, groesse) => {
+  netz.setze = (i, x, y, z, groesse, spiegel = false) => {
     ort.set(x, y + a.mitteY * groesse, z);
-    gr.setScalar(groesse);
+    gr.set(spiegel ? -groesse : groesse, groesse, groesse);
     netz.setMatrixAt(i, m.compose(ort, dreh, gr));
   };
   // Dieselbe Toenung wie die Krone. Ohne sie spraenge die Farbe eines Baums

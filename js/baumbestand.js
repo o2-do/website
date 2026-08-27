@@ -7,7 +7,7 @@ import { ladeMaske } from './bodenkarte.js';
  * Der Baumbestand eines Gartens: alle Baeume aller Sorten, ihre Schatten und
  * ihre Fernansicht.
  *
- * DREI DINGE JE SORTE, und alle drei sind ein einziges InstancedMesh:
+ * DREI DINGE JE SORTE UND SEKTOR, und alle drei sind ein InstancedMesh:
  *
  *   Wald      Holz und Laub - der Baum, wie er ist. Zwei Zeichenaufrufe.
  *   Werfer    Unsichtbare Flaechen quer zum Sonnenstrahl. Sie werfen den
@@ -15,6 +15,12 @@ import { ladeMaske } from './bodenkarte.js';
  *             Schattendurchgang zwei Dreiecke statt der ganzen Krone.
  *   Tafeln    Die gebackene Seitenansicht. Sie tritt in der Ferne an die
  *             Stelle des Baums; ein Rechteck statt zweier Netze.
+ *
+ * AUFGETEILT WIRD NACH SEKTOREN, wie beim Gras (siehe `sektoren.js`). Ein Netz
+ * ueber den ganzen Garten hat eine Huellkugel vom Gartenradius; man steht immer
+ * darin, und das Sichtvolumen kann es nie verwerfen. Bei hundert Baeumen sind
+ * das eine halbe Million Dreiecke Holz, die auch dann gezeichnet werden, wenn
+ * man in die andere Richtung schaut.
  *
  * DIE FERNE IST EINE SACHE DER ANSICHT, NICHT DES BAUMS. Die Tafel ist fuer
  * die Laufperspektive gerechnet, in der zwanzig Meter weit sind. Aus der
@@ -54,7 +60,7 @@ export async function ladeBauplaene(liste, onProgress = () => {}) {
  * davon ab, wie viele Baeume welcher Sorte zufaellig herauskamen, und derselbe
  * Startwert lieferte je nach Liste einen anderen Garten.
  */
-export async function baueBestand(cfg, liste, plaene, trunks, bodenkarte) {
+export async function baueBestand(cfg, liste, plaene, trunks, bodenkarte, sektoren) {
   const rng = stream(cfg._seed, 'baum-verteilung');
   // Die Grenze zur Tafel steht hier und nicht in `cfg`: sie wirkt sofort, und
   // das Formular reicht bei jeder Aenderung ein frisch gelesenes cfg herein -
@@ -113,9 +119,17 @@ export async function baueBestand(cfg, liste, plaene, trunks, bodenkarte) {
 
   const group = new THREE.Group();
   group.name = 'baeume';
-  const sorten = [];
+  // EIN EINTRAG JE SORTE UND SEKTOR - nicht je Sorte. Was hier `gruppen` heisst,
+  // ist ein Haeufchen Baeume derselben Datei in demselben Rasterfeld, mit
+  // eigenem Netz und eigener Huellkugel.
+  const gruppen = [];
+  // GEZAEHLT WIRD, WAS UNTERSCHIEDLICH IST. Dieselbe Datei darf in `standard`
+  // mehrfach stehen - so stellt man die Verteilung ein, ohne einen zweiten
+  // Regler dafuer zu brauchen -, sie ergibt aber nur EINEN Bauplan und EIN
+  // Netz. Die Laenge der Liste waere hier also die Zahl der Lose, nicht die
+  // der Sorten.
   const stats = { baeume: trunks.length, benannt: benannt.length,
-                  sorten: liste.standard.length, billboards: 0, dreiecke: 0 };
+                  sorten: new Set(liste.standard).size, billboards: 0, dreiecke: 0 };
 
   const q = new THREE.Quaternion();
   const achse = new THREE.Vector3(0, 1, 0);
@@ -124,39 +138,66 @@ export async function baueBestand(cfg, liste, plaene, trunks, bodenkarte) {
 
   for (const [datei, baeume] of jeDatei) {
     const plan = plaene.get(datei);
-    const n = baeume.length;
-
-    const wald = baueWald(plan, n);
-    // Das Holz bleibt auch in der Karte stehen. Es war kurz ausgeblendet - aus
-    // 35 Grad ueber dem Horizont sieht man den Stamm ja kaum -, aber dann
-    // schwebte die Krone ueber ihrem eigenen Schatten: der Stamm ist das
-    // Einzige, was sie sichtbar mit dem Boden verbindet.
-    const werfer = baueWerfer(plan, n);
-    const tafeln = await baueTafeln(plan, n);
-
-    // Die Matrizen werden aufgehoben, nicht nur gesetzt: die Entfernung
-    // schaltet weiter unten zwischen Netz und Tafel um, und dann muss beides
-    // jederzeit wieder an seinen Platz geschrieben werden koennen.
-    const matrizen = [];
     const maske = await ladeMaske(plan.paket.schatten);
 
-    baeume.forEach((b, i) => {
-      q.setFromAxisAngle(achse, b.dreh);
-      skal.setScalar(b.groesse);
-      ort.set(b.x, b.y, b.z);
-      matrizen[i] = new THREE.Matrix4().compose(ort, q, skal);
-      wald.setze(i, matrizen[i]);
-      wald.faerbe(i, b.ton);
-      if (werfer) werfer.setze(i, b.x, b.y, b.z, b.groesse);
-      if (tafeln) { tafeln.setMatrixAt(i, NIRGENDS); tafeln.faerbe(i, b.ton); }
-      if (bodenkarte) bodenkarte.setze(maske, plan.paket.schatten, b.x, b.z, b.dreh, b.groesse);
-    });
-    wald.fertig();
-    group.add(wald);
-    if (werfer) { werfer.fertig(); group.add(werfer); }
-    if (tafeln) { tafeln.fertig(); group.add(tafeln); }
+    // JE SORTE UND SEKTOR EIN NETZ, nicht je Sorte eines.
+    //
+    // Der Grund ist derselbe wie beim Gras (siehe `sektoren.js`), nur faellt er
+    // hier am schwersten ins Gewicht: das Holz von hundert Baeumen sind eine
+    // halbe Million Dreiecke, und in EINEM Netz ueber den ganzen Garten hat es
+    // eine Huellkugel vom Gartenradius. Man steht immer darin - das
+    // Sichtvolumen kann es nie verwerfen, und die Baeume hinter dem Ruecken
+    // werden mitgezeichnet. Aufgeteilt faellt weg, was nicht im Bild ist.
+    const teile = sektoren ? sektoren.teile(baeume) : new Map([[0, baeume]]);
+    for (const [feld, meine] of teile) {
+      const n = meine.length;
+      const wald = baueWald(plan, n);
+      // Das Holz bleibt auch in der Karte stehen. Es war kurz ausgeblendet -
+      // aus 35 Grad ueber dem Horizont sieht man den Stamm ja kaum -, aber dann
+      // schwebte die Krone ueber ihrem eigenen Schatten: der Stamm ist das
+      // Einzige, was sie sichtbar mit dem Boden verbindet.
+      const werfer = baueWerfer(plan, n);
+      const tafeln = await baueTafeln(plan, n);
+      wald.name = `${wald.name}_${feld}`;
 
-    sorten.push({ plan, baeume, matrizen, wald, werfer, tafeln });
+      // Die Matrizen werden aufgehoben, nicht nur gesetzt: die Entfernung
+      // schaltet weiter unten zwischen Netz und Tafel um, und dann muss beides
+      // jederzeit wieder an seinen Platz geschrieben werden koennen.
+      const matrizen = [];
+      meine.forEach((b, i) => {
+        q.setFromAxisAngle(achse, b.dreh);
+        skal.setScalar(b.groesse);
+        ort.set(b.x, b.y, b.z);
+        matrizen[i] = new THREE.Matrix4().compose(ort, q, skal);
+        wald.setze(i, matrizen[i]);
+        wald.faerbe(i, b.ton);
+        if (werfer) werfer.setze(i, b.x, b.y, b.z, b.groesse);
+        if (tafeln) { tafeln.setMatrixAt(i, NIRGENDS); tafeln.faerbe(i, b.ton); }
+        if (bodenkarte) bodenkarte.setze(maske, plan.paket.schatten, b.x, b.z, b.dreh, b.groesse);
+      });
+      wald.fertig();
+      group.add(wald);
+      if (werfer) { werfer.fertig(); group.add(werfer); }
+      if (tafeln) { tafeln.fertig(); group.add(tafeln); }
+      // Am Anfang steht ueberall der echte Baum; die Tafeln liegen alle auf
+      // NIRGENDS und brauchen gar nicht erst eingereicht zu werden.
+      if (tafeln) tafeln.visible = false;
+
+      // Die Mitte des Feldes und sein Halbmesser: damit kann `aktualisiere`
+      // ganze Sektoren ueberspringen, statt jeden Baum einzeln zu messen.
+      let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+      for (const b of meine) {
+        if (b.x < minX) minX = b.x; if (b.x > maxX) maxX = b.x;
+        if (b.z < minZ) minZ = b.z; if (b.z > maxZ) maxZ = b.z;
+      }
+      const mx = (minX + maxX) / 2, mz = (minZ + maxZ) / 2;
+      const rr = Math.hypot(maxX - mx, maxZ - mz);
+
+      gruppen.push({ plan, baeume: meine, matrizen, wald, werfer, tafeln,
+                     mx, mz, rr, alleFern: false, alleNah: true });
+    }
+
+    const n = baeume.length;
     // Wie viele UNTERSCHIEDLICHE Toene die Sorte mitbringt. Gezaehlt wird ueber
     // die Rohwerte, nicht ueber getHex(): die Varianten duerfen ueber eins
     // liegen (1,8 faerbt kraeftiger, als das Bild ist), und getHex kappt dort.
@@ -170,7 +211,7 @@ export async function baueBestand(cfg, liste, plaene, trunks, bodenkarte) {
   // spaeter in dieselbe Leinwand, und `garden.js` zeichnet sie einmal am Ende.
 
   const bestand = {
-    group, benannt, stats, sorten,
+    group, benannt, stats, gruppen,
 
     /**
      * Nah und fern. Gemessen wird vom Auge zum Baumfuss; der Rueckweg liegt
@@ -188,17 +229,38 @@ export async function baueBestand(cfg, liste, plaene, trunks, bodenkarte) {
       const band = ferne.band;
       const p = kamera.getWorldPosition(_p);
 
-      for (const s of sorten) {
+      for (const s of gruppen) {
+        // GANZE SEKTOREN UEBERSPRINGEN. Liegt das Feld mitsamt seinem
+        // Halbmesser diesseits der Grenze, sind alle seine Baeume nah; liegt es
+        // ganz jenseits, sind alle fern. Nur die Felder, durch die die Grenze
+        // laeuft, muessen Baum fuer Baum gemessen werden - und selbst die nur,
+        // solange sich etwas aendern kann.
+        const dm = Math.hypot(p.x - s.mx, p.z - s.mz);
+        if (dm + s.rr < ab - band) { if (s.alleNah) continue; }
+        else if (dm - s.rr > ab) { if (s.alleFern) continue; }
         let anders = false;
+        let nah = 0;
         s.baeume.forEach((b, i) => {
           const d = Math.hypot(p.x - b.x, p.y - b.y, p.z - b.z);
           const fern = b.fern ? d > ab - band : d > ab;
+          if (!fern) nah++;
           if (fern === b.fern) return;
           b.fern = fern;
           anders = true;
           s.wald.setze(i, fern ? NIRGENDS : s.matrizen[i]);
           if (s.tafeln) s.tafeln.setMatrixAt(i, fern ? _tafel(s.plan, b) : NIRGENDS);
         });
+        s.alleNah = nah === s.baeume.length;
+        s.alleFern = nah === 0;
+        // GANZ AUS STATT AUF NULL GESCHRUMPFT. Eine Instanz mit Groesse null
+        // erzeugt keinen Bildpunkt - der Scheitelpunkt-Shader laeuft aber
+        // trotzdem ueber sie. Ein Sektor, in dem alle Baeume fern sind, hat
+        // hundert solcher Instanzen; sichtbar bleibt dann nur die Tafel.
+        // Nebenbei behebt das eine Merkwuerdigkeit der Huellkugel: ueber lauter
+        // Nullmatrizen gerechnet, schrumpft sie auf den Ursprung des Gartens -
+        // und das Netz gilt als sichtbar, sobald man zur Gartenmitte schaut.
+        s.wald.visible = !s.alleFern;
+        if (s.tafeln) s.tafeln.visible = !s.alleNah;
         if (anders) {
           s.wald.fertig();
           if (s.tafeln) s.tafeln.fertig();
@@ -218,7 +280,7 @@ export async function baueBestand(cfg, liste, plaene, trunks, bodenkarte) {
      * uebersetzen.
      */
     setzeSchatten(art) {
-      for (const s of sorten) if (s.werfer) s.werfer.visible = art === 'detailliert';
+      for (const s of gruppen) if (s.werfer) s.werfer.visible = art === 'detailliert';
       if (bodenkarte) bodenkarte.setzeAktiv(art === 'simpel');
     },
   };
@@ -244,6 +306,17 @@ const _skal = new THREE.Vector3();
 function _tafel(plan, b) {
   const a = plan.paket.ansicht;
   _ort.set(b.x, b.y + a.mitteY * b.groesse, b.z);
-  _skal.setScalar(b.groesse);
+  // JEDE ZWEITE TAFEL STEHT SEITENVERKEHRT. Eine negative Breite in der
+  // Instanzmatrix heisst dem Shader, das Bild zu spiegeln (siehe `spiegelbar`
+  // in `baumloader.js`) - hundert Baeume aus einem Bild sehen damit nach zweien
+  // aus, ohne einen einzigen Zeichenaufruf mehr.
+  //
+  // ENTSCHIEDEN WIRD ES AN DER DREHUNG, nicht an einem neuen Wurf. Die Drehung
+  // eines Baums ist bereits ausgewuerfelt und gleichverteilt, und auf die Tafel
+  // wirkt sie nicht - sie richtet sich ohnehin zur Kamera. Ein zusaetzlicher
+  // Wurf haette dagegen die ganze Zufallsfolge verschoben, und derselbe
+  // Startwert haette einen anderen Garten ergeben.
+  const w = b.groesse * (b.dreh > Math.PI ? -1 : 1);
+  _skal.set(w, b.groesse, b.groesse);
   return _m.compose(_ort, _dreh, _skal);
 }

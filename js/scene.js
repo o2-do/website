@@ -40,6 +40,31 @@ function buildSky() {
   return mesh;
 }
 
+/**
+ * WIE NAH DIE KAMERA AN ETWAS HERANDARF.
+ *
+ * Die Near-Plane bewusst nicht bei 0.1: die Wegbaender und die
+ * Kreuzungsflaechen liegen nur 1–2 cm auseinander, und die Tiefenaufloesung
+ * faellt quadratisch mit der Entfernung und linear mit 1/near. Bei 0.1
+ * flackert es in der Ferne.
+ *
+ * Daraus folgt ein MINDESTABSTAND zu allem, was fest ist. Geschnitten wird
+ * nach der TIEFE, nicht nach der Entfernung: ein Gegenstand am Bildrand steht
+ * schraeg zur Blickachse, seine Tiefe ist entsprechend kleiner als sein
+ * Abstand. In der Bildecke ist der Richtungskosinus
+ *
+ *     cos = 1 / sqrt(1 + tan(v/2)^2 + (tan(v/2)*Seitenverhaeltnis)^2)
+ *
+ * und bei weitestem Blickwinkel (60 Grad durch den kleinsten Zoom 0,75 macht
+ * 80 Grad) und einem breiten Fenster (2,2:1, also Querformat auf dem Telefon)
+ * sind das rund 0,45. Aus 0,40 m Tiefe werden damit 0,89 m Abstand.
+ *
+ * Wer den Wert benutzt, findet ihn in `garden.js` (Hindernisraster) und in
+ * `main.js`/`game.js` (Auslauf vor dem Zaun) wieder.
+ */
+export const NEAR = 0.4;
+export const KAMERA_FREI = 0.9;
+
 export function createViewer(canvas) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -117,10 +142,7 @@ export function createViewer(canvas) {
   //                 fest, es gibt also nichts nachzufuehren - und der
   //                 Schattendurchgang faellt je Bild ersatzlos weg.
 
-  // Near-Plane bewusst nicht bei 0.1: die Wegbaender und die Kreuzungsflaechen
-  // liegen nur 1–2 cm auseinander, und die Tiefenaufloesung faellt quadratisch
-  // mit der Entfernung und linear mit 1/near. Bei 0.1 flackert es in der Ferne.
-  const walkCam = new THREE.PerspectiveCamera(60, 1, 0.4, 2000);
+  const walkCam = new THREE.PerspectiveCamera(60, 1, NEAR, 2000);
   walkCam.rotation.order = 'YXZ';
 
   // Der Sichtwinkel in Augenhoehe hat zwei Anteile, und sie gehoeren getrennt:
@@ -393,6 +415,49 @@ export function createViewer(canvas) {
       renderer.shadowMap.needsUpdate = true;
       renderer.render(scene, active);
       return true;
+    },
+
+    /**
+     * DIE SHADER VORHER UEBERSETZEN.
+     *
+     * three uebersetzt das Programm eines Materials erst, wenn das Objekt zum
+     * ersten Mal im Bild ist. Beim Umsehen kommt also staendig ein neues dazu,
+     * und jede Uebersetzung haelt den Hauptfaden fuer Zehntelsekunden an - das
+     * ist das Ruckeln, das anfaengt, sobald viel im Blick ist, waehrend der
+     * Bildzaehler weiter 60 anzeigt (er mittelt ueber eine halbe Sekunde und
+     * merkt einzelne lange Bilder kaum).
+     *
+     * Deshalb wird nach dem Aufbau einmal alles uebersetzt, was in der Szene
+     * steht - ob es gerade zu sehen ist oder nicht.
+     */
+    async waermeShader() {
+      const vorher = renderer.info.programs.length;
+      // ALLES SICHTBAR SCHALTEN, dann uebersetzen. three laeuft mit
+      // `traverseVisible` durch die Szene - was beim Aufbau ausgeschaltet ist,
+      // bekaeme sonst gerade kein Programm: die Fern-Tafeln der Baeume, das
+      // Gras jenseits der Sichtweite, die Teile, die nur die Karte zeigt.
+      // Genau die tauchen spaeter beim Umsehen zum ersten Mal auf, und dann
+      // waere die Uebersetzung wieder da, wo sie nicht hingehoert.
+      const stand = [];
+      scene.traverse((o) => { if (!o.visible) { stand.push(o); o.visible = true; } });
+      // UND ZWEIMAL, EINMAL JE FARBRAUM. Der Wasserspiegel zeichnet die Szene in
+      // ein Renderziel, und dort ist die Ausgabe linear statt sRGB. Das steht im
+      // Programmschluessel, also braucht jedes Material, das sich spiegelt, ein
+      // ZWEITES Programm - nachgemessen achtzehn Stueck, und die uebersetzten
+      // sich bisher genau dann, wenn der Teich ins Bild kam.
+      const hilfsziel = new THREE.WebGLRenderTarget(1, 1);
+      try {
+        for (const ziel of [null, hilfsziel]) {
+          renderer.setRenderTarget(ziel);
+          if (renderer.compileAsync) await renderer.compileAsync(scene, active);
+          else renderer.compile(scene, active);
+        }
+      } finally {
+        renderer.setRenderTarget(null);
+        hilfsziel.dispose();
+        for (const o of stand) o.visible = false;
+      }
+      return renderer.info.programs.length - vorher;
     },
 
     onFrame(fn) { state.onFrame = fn; },

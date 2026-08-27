@@ -1238,11 +1238,19 @@ export function baueGartennetz(paths, cfg, base, rng, teich = null) {
   return { P, wege, wiese, baender, seg: rand.seg };
 }
 
-/** Ein Netz aus einer Dreiecksliste. `uv` liefert je Punkt die Kachelung. */
-function netzAus(P, tri, uvFn, name, material) {
+/**
+ * Ein Netz aus einer Dreiecksliste. `uv` liefert je Punkt die Kachelung.
+ *
+ * `normalen` ist der gemeinsame Normalenvorrat ueber ALLE Punkte (siehe
+ * `normalenAus`). Wird er mitgegeben, kommen die Normalen von dort statt aus
+ * `computeVertexNormals` - beim Aufteilen in Sektoren ist das der Unterschied
+ * zwischen einer glatten Wiese und sichtbaren Nahtkanten: ein Punkt auf der
+ * Sektorgrenze mittelte sonst nur ueber die Dreiecke SEINES Stuecks.
+ */
+function netzAus(P, tri, uvFn, name, material, normalen) {
   // Nur die benutzten Punkte uebernehmen - das haelt die Puffer klein.
   const nach = new Map();
-  const pos = [], uv = [], idx = [];
+  const pos = [], uv = [], idx = [], nor = [];
   for (const i of tri) {
     let n = nach.get(i);
     if (n === undefined) {
@@ -1251,6 +1259,7 @@ function netzAus(P, tri, uvFn, name, material) {
       pos.push(P.x[i], P.y[i], P.z[i]);
       const [u, v] = uvFn(i);
       uv.push(u, v);
+      if (normalen) nor.push(normalen[i * 3], normalen[i * 3 + 1], normalen[i * 3 + 2]);
     }
     idx.push(n);
   }
@@ -1258,17 +1267,74 @@ function netzAus(P, tri, uvFn, name, material) {
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   geo.setIndex(idx);
-  geo.computeVertexNormals();
+  if (normalen) geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  else geo.computeVertexNormals();
   geo.computeBoundingSphere();
   const mesh = new THREE.Mesh(geo, material);
   mesh.name = name;
   return mesh;
 }
 
-/** Die Wiese - Kachelung ueber die Weltkoordinaten. */
-export function baueWiese(P, wiese, cfg, material) {
+/**
+ * Die Normalen ueber die GANZE Dreiecksliste, je Punkt des Vorrats.
+ *
+ * Dasselbe, was `computeVertexNormals` tut - nur einmal fuer alles und nicht
+ * je Teilnetz. Gewichtet wird mit dem Kreuzprodukt, dessen Laenge die doppelte
+ * Dreiecksflaeche ist; grosse Dreiecke zaehlen also mehr, wie ueblich.
+ */
+function normalenAus(P, tri, anzahl) {
+  const n = new Float32Array(anzahl * 3);
+  for (let k = 0; k < tri.length; k += 3) {
+    const a = tri[k], b = tri[k + 1], c = tri[k + 2];
+    const ax = P.x[b] - P.x[a], ay = P.y[b] - P.y[a], az = P.z[b] - P.z[a];
+    const bx = P.x[c] - P.x[a], by = P.y[c] - P.y[a], bz = P.z[c] - P.z[a];
+    const cx = ay * bz - az * by, cy = az * bx - ax * bz, cz = ax * by - ay * bx;
+    for (const i of [a, b, c]) { n[i * 3] += cx; n[i * 3 + 1] += cy; n[i * 3 + 2] += cz; }
+  }
+  for (let i = 0; i < anzahl; i++) {
+    const l = Math.hypot(n[i * 3], n[i * 3 + 1], n[i * 3 + 2]) || 1;
+    n[i * 3] /= l; n[i * 3 + 1] /= l; n[i * 3 + 2] /= l;
+  }
+  return n;
+}
+
+/**
+ * Die Wiese - Kachelung ueber die Weltkoordinaten, aufgeteilt nach Sektoren.
+ *
+ * SIE IST DIE GROESSTE EINZELFLAECHE DES GARTENS: bei zweihundert Metern
+ * Durchmesser und einem halben Meter Gitterweite sind das eine Viertelmillion
+ * Dreiecke. In einem Netz haette sie eine Huellkugel vom Gartenradius, und man
+ * steht immer darin - das Sichtvolumen kann sie nie verwerfen, auch nicht den
+ * Teil hinter dem Ruecken. Aufgeteilt faellt weg, was nicht im Bild ist.
+ *
+ * Einsortiert wird nach dem Schwerpunkt des DREIECKS, nicht nach seinen Ecken:
+ * ein Dreieck gehoert ganz in ein Feld, sonst faende es sich zerrissen wieder.
+ * Die Normalen kommen aus dem gemeinsamen Vorrat, damit die Naht nicht zu sehen
+ * ist.
+ *
+ * Zurueck kommt immer eine LISTE, auch ohne Aufteilung.
+ */
+export function baueWiese(P, wiese, cfg, material, sektoren) {
   const t = cfg.kachelWiese;
-  return netzAus(P, wiese, (i) => [P.x[i] / t, P.z[i] / t], 'boden', material);
+  const uvFn = (i) => [P.x[i] / t, P.z[i] / t];
+  const normalen = normalenAus(P, wiese, P.x.length);
+  if (!sektoren || !sektoren.an) {
+    return [netzAus(P, wiese, uvFn, 'boden', material, normalen)];
+  }
+  const felder = new Map();
+  for (let k = 0; k < wiese.length; k += 3) {
+    const a = wiese[k], b = wiese[k + 1], c = wiese[k + 2];
+    const f = sektoren.index((P.x[a] + P.x[b] + P.x[c]) / 3,
+                             (P.z[a] + P.z[b] + P.z[c]) / 3);
+    let liste = felder.get(f);
+    if (!liste) { liste = []; felder.set(f, liste); }
+    liste.push(a, b, c);
+  }
+  const netze = [];
+  for (const [f, liste] of felder) {
+    netze.push(netzAus(P, liste, uvFn, `boden_${f}`, material, normalen));
+  }
+  return netze;
 }
 
 /**

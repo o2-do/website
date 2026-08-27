@@ -60,6 +60,11 @@ export const SCHEMA = [
   // Wiesenpunkte werden dafuer nur ANGEHOBEN, nie gesenkt: an der oberen
   // Wegkante schneidet der Weg in den Hang, und dort soll die Boeschung
   // stehenbleiben, wie sie ist.
+  // Treppen im Rundweg. Die Masse selbst stehen in `stufen.js` - sie folgen
+  // einer Regel und nicht dem Geschmack: 15 cm hoch und 28 cm tief, solange es
+  // geht, sonst tiefer (flacher Hang) oder hoeher (steiler, ab 20 cm Auftritt).
+  { group: 'Wege', key: 'stufen', label: 'Treppen im Rundweg', type: 'checkbox', default: true },
+  { group: 'Wege', key: 'stufenAb', label: 'Treppe ab Steigung', unit: 'Grad', type: 'range', min: 15, max: 60, step: 1, default: 35 },
   { group: 'Wege', key: 'wegBoeschung', label: 'Boeschung neben dem Weg', unit: 'm (0 = aus)', type: 'range', min: 0, max: 6, step: 0.1, default: 1.5 },
   { group: 'Wege', key: 'kachelWeg', label: 'Texturkachel Weg', unit: 'm', type: 'range', min: 0.3, max: 4, step: 0.1, default: 1.5 },
   { group: 'Wege', key: 'kachelAbk', label: 'Texturkachel Abkuerzung', unit: 'm', type: 'range', min: 0.3, max: 4, step: 0.1, default: 1.0 },
@@ -118,6 +123,9 @@ export const SCHEMA = [
   { group: 'Zaun', key: 'gelaender', label: 'Gelaender an steilen Wegen', type: 'checkbox', default: true },
   { group: 'Zaun', key: 'gelaenderAb', label: 'Gelaender ab Gefaelle', unit: 'Grad', type: 'range', min: 10, max: 60, step: 1, default: 28 },
 
+  // Der Wegweiser gegenueber dem Tor - ein Brett mit Spitze, das in eine der
+  // beiden Richtungen des Rundwegs zeigt. Welche, entscheidet der Startwert.
+  { group: 'Schilder', key: 'wegweiser', label: 'Wegweiser am Eingang', type: 'checkbox', default: true },
   { group: 'Schilder', key: 'schriftGroesse', label: 'Schriftgroesse', unit: 'm', type: 'range', min: 0.04, max: 0.3, step: 0.005, default: 0.12 },
   { group: 'Schilder', key: 'schildRand', label: 'Rand um die Schrift', unit: 'm', type: 'range', min: 0.01, max: 0.2, step: 0.005, default: 0.05 },
   { group: 'Schilder', key: 'schildMitteHoehe', label: 'Schildmitte ueber Grund', unit: 'm', type: 'range', min: 0.3, max: 2.5, step: 0.05, default: 1.3 },

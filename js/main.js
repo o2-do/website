@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { SCHEMA, defaults, normalize } from './config.js';
-import { createViewer } from './scene.js';
+import { createViewer, KAMERA_FREI } from './scene.js';
 import { loadTextures } from './textures.js';
 import { buildGarden, disposeGarden } from './garden.js';
 import { createWalker, MAX_PENDING } from './walker.js';
@@ -8,12 +8,14 @@ import { createWalkerMark, buildSignMarks, updateMarks } from './mapmarks.js';
 import { parseTreeList, fetchTreeList, clearTreeCache } from './baumloader.js';
 import { setTranslucency } from './translucency.js';
 import { aktualisiereGrasSicht } from './grass.js';
-import { zaunRadius } from './zaun.js';
+import { zaunRadius, PFOSTEN_D } from './zaun.js';
 
 // Wie weit vor dem Zaun der Spaziergang endet. Die Augenhoehe liegt bei 1,50 m,
 // der Zaun ist 1 m hoch - wer bis an ihn heranlaeuft, hat ihn nicht mehr im
 // Bild, sondern steckt darin.
-const LAUFABSTAND_ZAUN = 0.6;
+// So weit vor dem Zaun endet der Auslauf: der Kameraabstand plus der halbe
+// Pfosten, denn gemessen wird zur Pfostenmitte, gemeint ist seine Oberflaeche.
+const LAUFABSTAND_ZAUN = KAMERA_FREI + PFOSTEN_D / 2;
 
 const canvas = document.getElementById('view');
 const form = document.getElementById('params');
@@ -327,6 +329,9 @@ async function rebuild() {
     const built = await buildGarden(cfg, tex, (t) => { spinnerText.textContent = t; });
     viewer.scene.add(built.group);
     garden = built;
+    // Was den Weg verstellt: Staemme, Felsen, Zypressen, Wasser, Gelaender.
+    // Beete und Wege stehen bewusst NICHT darin - durch ein Beet laeuft man.
+    walker.setzeHindernis((x, z) => built.hindernisse.belegt(x, z));
     stats = built.stats;
 
     viewer.setForest(tex.wald, cfg.waldRadius, cfg.waldHoehe, cfg.wald);
@@ -361,6 +366,10 @@ async function rebuild() {
       walker.reset(0, 0, 0);
     }
     viewer.birdFit(R);
+    // Noch im Spinner: alle Shader uebersetzen. Danach kostet das erste
+    // Auftauchen eines Objekts kein langes Bild mehr (siehe `waermeShader`).
+    spinnerText.textContent = 'Shader …';
+    await viewer.waermeShader();
 
     document.getElementById('build-info').textContent =
       `${stats.ms} ms · Gitter ${stats.gitter}² · Rundweg + ${stats.abkuerzungen} Abkürzungen ` +

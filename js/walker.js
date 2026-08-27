@@ -71,6 +71,10 @@ export function createWalker(camera, getHeight) {
   let dragging = false, retT = RETURN, pitchFrom = 0;
   // Halbmesser, ueber den hinaus nicht gelaufen wird. 0 heisst: keine Grenze.
   let grenze = 0;
+  // `hindernis(x, z)` sagt, ob dort etwas im Weg steht. Fehlt sie, laeuft es
+  // wie bisher - der Konfigurator kann sie also nachreichen, wenn der Garten
+  // fertig ist, und nichts haengt in der Zwischenzeit.
+  let hindernis = null;
   // Ob der letzte Schritt an der Grenze haengengeblieben ist - damit das
   // Ereignis eine Flanke ist und kein Dauerton.
   let angestossen = false;
@@ -123,11 +127,113 @@ export function createWalker(camera, getHeight) {
    * die Tangente steht senkrecht darauf. Solange der Zaun ein Kreis ist,
    * braucht es dafuer keine Geometrie, nur zwei Skalarprodukte.
    */
+  /**
+   * AM HINDERNIS WIRD ENTLANGGERUTSCHT, NICHT ANGEHALTEN.
+   *
+   * Dasselbe Prinzip wie am Zaun, nur ohne dessen Geometrie: von einem
+   * Baumstamm, einem Felsen oder einem Gelaender ist die Richtung nicht
+   * bekannt, also wird sie GESUCHT - und zwar richtig, nicht durch Probieren.
+   *
+   * Das Hindernisraster ist ein Feld aus Nullen und Einsen; seine Steigung an
+   * der Beruehrstelle zeigt ins Hindernis hinein. Acht Abfragen ringsum
+   * ergeben diese Richtung, und von da an ist es einfache Vektorrechnung: der
+   * Anteil des Schrittes LAENGS der Wand bleibt, der Anteil dagegen faellt weg.
+   *
+   *     tangential = d - n * (d . n)
+   *
+   * Wer flach an ein Gelaender geraet, laeuft also fast ungebremst daran
+   * entlang, statt haengenzubleiben - und behaelt dabei seine Blickrichtung.
+   * Vorher wurde der Schritt in festen Stufen gedreht und dabei um den Kosinus
+   * gekuerzt; bei einem schmalen Weg zwischen zwei Gelaendern war keine der
+   * Stufen frei, und man stand.
+   *
+   * ZWEI SICHERUNGEN. Steht man schon IM Hindernis - das Raster ist grob, das
+   * Gelaende schiebt einen -, gilt es nicht: sonst waere jede Richtung gesperrt
+   * und man kaeme nie wieder heraus. Und findet sich keine Normale (man steckt
+   * mitten in einer Flaeche), bleibt das Drehen als letzter Ausweg.
+   */
+  // Wo ringsum gemessen wird. Ein halber Meter ist grob genug, um die Wand als
+  // Ganzes zu sehen, und fein genug, um an einer Ecke noch zu stimmen.
+  const FUEHLER = 0.5;
+  // WIE WEIT VORAUSGESCHAUT WIRD, mindestens.
+  //
+  // Ein Schritt dauert eine knappe Sekunde und wird auf sechzig Bilder
+  // verteilt: je Bild sind das keine zwei Zentimeter, waehrend eine Rasterzelle
+  // fuenfzehn misst. Fragt man nur, ob DIESER Zentimeter frei ist, entscheidet
+  // nicht die Wand, sondern der Zufall der Zellgrenze - laengs einer schraegen
+  // Wand liegt die naechste Zelle abwechselnd frei und gesperrt, und der Geher
+  // blieb an dieser Treppung haengen. Geprueft wird deshalb immer ein Stueck
+  // voraus, gegangen aber nur der kleine Schritt.
+  const VORAUS = 0.25;
+
+  function frei(dx, dz) {
+    // Der naechste Schritt selbst - sonst traete man in die Zelle hinein und
+    // waere drin; von drinnen laesst die Notbremse weiter unten alles zu, und
+    // man liefe glatt durch das Gelaender hindurch.
+    if (hindernis(pose.x + dx, pose.z + dz)) return false;
+    const l = Math.hypot(dx, dz);
+    if (l < 1e-9) return true;
+    const f = VORAUS / l;
+    return f <= 1 || !hindernis(pose.x + dx * f, pose.z + dz * f);
+  }
+
+  function hindernisNormale(x, z) {
+    let nx = 0, nz = 0, treffer = 0;
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      const sx = Math.sin(a), sz = Math.cos(a);
+      if (hindernis(x + sx * FUEHLER, z + sz * FUEHLER)) { nx += sx; nz += sz; treffer++; }
+    }
+    if (!treffer) return null;
+    // Die Summe zeigt INS Hindernis; die Normale zeigt heraus.
+    const l = Math.hypot(nx, nz);
+    return l < 1e-6 ? null : [-nx / l, -nz / l];
+  }
+
+  function ausweichen(dx, dz) {
+    if (!hindernis || frei(dx, dz)) return [dx, dz];
+    // Schon drin: nicht auch noch einsperren.
+    if (hindernis(pose.x, pose.z)) return [dx, dz];
+    const laenge = Math.hypot(dx, dz);
+    if (laenge < 1e-6) return [0, 0];
+
+    const f = Math.max(1, VORAUS / laenge);
+    const n = hindernisNormale(pose.x + dx * f, pose.z + dz * f);
+    if (n) {
+      const rein = dx * n[0] + dz * n[1];
+      const tx = dx - n[0] * rein, tz = dz - n[1] * rein;
+      // ERST GLATT, DANN MIT ABSTAND. Der Rutschweg laeuft dicht an der Wand,
+      // und die Wand ist im Raster eine Treppe aus 15-cm-Zellen: mal liegt die
+      // naechste Zelle frei, mal nicht. Geht es glatt nicht, wird ein Stueck
+      // von der Wand weggedrueckt - zwei Zentimeter reichen meist, sechs immer.
+      // Nur wenn es noetig ist, sonst schoebe es einen bei jedem Schritt weiter
+      // in die Wegmitte.
+      for (const ab of [0, 0.02, 0.06]) {
+        const ex = tx + n[0] * ab, ez = tz + n[1] * ab;
+        if (frei(ex, ez)) return [ex, ez];
+      }
+    }
+
+    // Letzter Ausweg: den Schritt drehen, bis etwas frei ist.
+    const w0 = Math.atan2(dx, dz);
+    for (const grad of [15, 30, 45, 60, 75, 88]) {
+      const w = (grad * Math.PI) / 180;
+      const kurz = laenge * Math.cos(w);
+      for (const seite of [1, -1]) {
+        const a = w0 + seite * w;
+        const ex = Math.sin(a) * kurz, ez = Math.cos(a) * kurz;
+        if (frei(ex, ez)) return [ex, ez];
+      }
+    }
+    return [0, 0];
+  }
+
   function schiebe(dx, dz) {
     const r = Math.hypot(pose.x, pose.z);
     const nx1 = pose.x + dx, nz1 = pose.z + dz;
     if (grenze <= 0 || Math.hypot(nx1, nz1) <= grenze) {
-      pose.x = nx1; pose.z = nz1;
+      const [ex, ez] = ausweichen(dx, dz);
+      pose.x += ex; pose.z += ez;
       angestossen = false;
       return;
     }
@@ -145,8 +251,11 @@ export function createWalker(camera, getHeight) {
     const ax = pose.x / r, az = pose.z / r;
     const tx = -az, tz = ax;
     const laengs = dx * tx + dz * tz;
-    pose.x += tx * laengs;
-    pose.z += tz * laengs;
+    // Erst am Zaun entlang, dann um die Hindernisse herum - beides derselbe
+    // Gedanke, nur nacheinander angewandt.
+    const [ex, ez] = ausweichen(tx * laengs, tz * laengs);
+    pose.x += ex;
+    pose.z += ez;
     // Der Schritt laengs des Zauns fuehrt auf der Sehne minimal nach aussen;
     // deshalb zum Schluss noch einmal auf den Kreis zurueckziehen.
     const r2 = Math.hypot(pose.x, pose.z);
@@ -235,6 +344,8 @@ export function createWalker(camera, getHeight) {
      * die ja von draussen kommt.
      */
     setzeGrenze(radius) { grenze = Math.max(0, radius || 0); angestossen = false; },
+    /** Die Abfrage auf feste Hindernisse setzen (oder mit `null` abschalten). */
+    setzeHindernis(fn) { hindernis = typeof fn === 'function' ? fn : null; },
     get grenze() { return grenze; },
 
     /** Ob gerade eine Aktion laeuft oder wartet. */

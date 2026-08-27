@@ -134,6 +134,7 @@ export function createBodenkarte(cfg) {
   const stempel = [];
   const kreise = [];
   const ellipsen = [];
+  const risse = [];
   let an = true;
 
   // Das Uniform-Objekt steht ausserhalb und wird nur hineingereicht. Es innen
@@ -199,6 +200,18 @@ export function createBodenkarte(cfg) {
       if (laengs > 0 && quer > 0) ellipsen.push({ x, z, laengs, quer, winkel, deckung });
     },
 
+    /**
+     * EIN WIRKLICHER SCHATTENRISS.
+     *
+     * `punkte` ist ein geschlossener Zug in Weltkoordinaten x/z - der Umriss
+     * eines Gegenstands, laengs der Sonnenstrahlen auf den Boden geworfen
+     * (siehe `schattenriss.js`). Anders als Kreis und Ellipse ist er kein
+     * Ersatz, sondern die Sache selbst.
+     */
+    setzeRiss(punkte) {
+      if (punkte && punkte.length >= 3) risse.push(punkte);
+    },
+
     /** Die ganze Karte auf einmal zeichnen. */
     zeichne() {
       ctx.globalCompositeOperation = 'source-over';
@@ -254,6 +267,39 @@ export function createBodenkarte(cfg) {
         ctx.beginPath();
         ctx.arc(cx, cz, r, 0, Math.PI * 2);
         ctx.fill();
+      }
+
+      // Die Risse: gefuellte Vielecke mit weicher Kante.
+      //
+      // ERST ALLE SAMMELN, DANN EINMAL WEICHZEICHNEN. Ein `ctx.filter` je
+      // Fuellung legt in Chrome fuer jede einzelne eine Ebene in Leinwandgroesse
+      // an; bei tausend Rissen auf 2048 Bildpunkten steht der Aufbau danach
+      // minutenlang. Auf einer Nebenleinwand gezeichnet und in EINEM Zug
+      // herueberkopiert kostet es einen Weichzeichner statt tausend.
+      //
+      // Der Weichzeichner steht fuer das Halbschattenband - eine Kante, die auf
+      // den Bildpunkt genau endet, sieht aus wie ausgeschnitten.
+      if (risse.length) {
+        const neben = document.createElement('canvas');
+        neben.width = neben.height = px;
+        const n = neben.getContext('2d');
+        n.fillStyle = '#000';
+        for (const r of risse) {
+          n.beginPath();
+          n.moveTo((r[0][0] + weite / 2) * proMeter, (r[0][1] + weite / 2) * proMeter);
+          for (let i = 1; i < r.length; i++) {
+            n.lineTo((r[i][0] + weite / 2) * proMeter, (r[i][1] + weite / 2) * proMeter);
+          }
+          n.closePath();
+          n.fill();
+        }
+        ctx.save();
+        ctx.filter = `blur(${Math.max(1, proMeter * 0.12).toFixed(1)}px)`;
+        ctx.drawImage(neben, 0, 0);
+        ctx.restore();
+        // `restore` holt auch den Kompositionsmodus zurueck - er muss danach
+        // wieder stehen, sonst zeichneten die Baumstempel deckend.
+        ctx.globalCompositeOperation = 'darken';
       }
 
       for (const s of stempel) {

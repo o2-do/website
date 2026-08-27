@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { stream, rand } from './rng.js';
 import { createZypresseGeometry, createZypresseMaterial } from '../cypress/cypress-loader.js';
 import { frisch } from './frisch.js';
-import { sonnenVersatz } from './baumloader.js';
+import { stempleRiss } from './schattenriss.js';
 
 /**
  * Zypressen, und zwar zu dritt.
@@ -143,23 +143,25 @@ export function baueZypressen(baeume, sorten, sektoren) {
 }
 
 /**
- * Der eingebrannte Schatten.
+ * Der eingebrannte Schatten - der wirkliche Umriss, nicht mehr die Ellipse.
  *
- * Eine Zypresse ist fuenf bis sechs Meter hoch und einen halben breit - ihr
- * Schatten ist entsprechend ein langer schmaler Streifen und kein Fleck. Er
- * reicht vom Fuss bis zu dem Punkt, an dem die Spitze ihn hinwirft; gezeichnet
- * wird er als Ellipse mit genau diesen Halbachsen (siehe `setzeEllipse` in
- * `bodenkarte.js`).
+ * Eine Zypresse ist fuenf bis sechs Meter hoch und einen halben breit; ihr
+ * Schatten ist ein langer schmaler Keil, der sich zur Spitze hin verjuengt.
+ * Eine Ellipse traf die Laenge, nicht aber die Form - siehe `schattenriss.js`.
  */
 export function stempelZypressenschatten(bodenkarte, baeume, sorten) {
   if (!bodenkarte || !baeume.length) return 0;
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const eins = new THREE.Vector3(1, 1, 1);
+  const ort = new THREE.Vector3();
   for (const b of baeume) {
     const sorte = sorten[b.vorlage];
-    const v = sonnenVersatz(sorte.hoehe);
-    const laenge = Math.hypot(v.x, v.z);
-    bodenkarte.setzeEllipse(b.x + v.x / 2, b.z + v.z / 2,
-                            sorte.radius + laenge / 2, sorte.radius,
-                            Math.atan2(v.z, v.x));
+    q.setFromAxisAngle(_y, b.dreh);
+    m.compose(ort.set(b.x, b.y, b.z), q, eins);
+    // `b.y` liegt 20 cm unter dem Boden (siehe `planZypressen`); der Schatten
+    // beginnt am Boden.
+    stempleRiss(bodenkarte, sorte.geo, m, b.y + 0.2);
   }
   return baeume.length;
 }

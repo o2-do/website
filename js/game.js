@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { defaults, normalize } from './config.js';
-import { createViewer } from './scene.js';
+import { createViewer, KAMERA_FREI } from './scene.js';
 import { loadTextures } from './textures.js';
 import { buildGarden, disposeGarden } from './garden.js';
 import { createWalker } from './walker.js';
@@ -9,7 +9,7 @@ import { fetchTreeList } from './baumloader.js';
 import { setTranslucency } from './translucency.js';
 import { aktualisiereGrasSicht } from './grass.js';
 import { frisch } from './frisch.js';
-import { zaunRadius } from './zaun.js';
+import { zaunRadius, PFOSTEN_D } from './zaun.js';
 
 /**
  * Der Spieleinstieg (`game.html`).
@@ -66,7 +66,11 @@ let grenzeSoll = 0;
  */
 function starteIntro(cfg, built) {
   const t = built.tor;
-  grenzeSoll = cfg.zaun ? zaunRadius(cfg) - 0.6 : cfg.durchmesser / 2;
+  // So weit vor dem Zaun, wie die Near-Plane es verlangt (siehe `KAMERA_FREI`
+  // in scene.js), plus den halben Pfosten - gemessen wird zur Pfostenmitte,
+  // gemeint ist seine Oberflaeche.
+  grenzeSoll = cfg.zaun ? zaunRadius(cfg) - (KAMERA_FREI + PFOSTEN_D / 2)
+                        : cfg.durchmesser / 2;
   if (!t) {                                   // kein Tor: wie bisher am Weg
     intro = false;
     walker.setzeGrenze(grenzeSoll);
@@ -140,6 +144,9 @@ async function rebuild() {
     const built = await buildGarden(cfg, texturen, (t) => { spinnerText.textContent = t; });
     viewer.scene.add(built.group);
     garden = built;
+    // Was den Weg verstellt: Staemme, Felsen, Zypressen, Wasser, Gelaender.
+    // Beete und Wege stehen bewusst NICHT darin - durch ein Beet laeuft man.
+    walker.setzeHindernis((x, z) => built.hindernisse.belegt(x, z));
 
     viewer.setForest(texturen.wald, cfg.waldRadius, cfg.waldHoehe, cfg.wald);
     viewer.setViewParts(
@@ -154,6 +161,10 @@ async function rebuild() {
     schattenAnwenden(cfg);
     starteIntro(cfg, built);
     viewer.birdFit(R);
+    // Noch im Spinner alle Shader uebersetzen - sonst haelt jedes erstmals
+    // sichtbare Objekt den Hauptfaden an (siehe `waermeShader` in scene.js).
+    spinnerText.textContent = 'Shader …';
+    await viewer.waermeShader();
   } catch (err) {
     console.error(err);
     spinnerText.textContent = 'Fehler beim Aufbau: ' + err.message;

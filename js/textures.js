@@ -12,13 +12,18 @@ export async function loadTextures(renderer) {
     abk: 'img/abk2.jpg?v3',         // Belag der Abkuerzungen
     fels: 'img/felsstruktur.jpg',
     wald: 'img/wald.png',       // Silhouettenstreifen mit Alphakanal
-    pfosten: 'img/pfosten.jpg', // Holz von Zaunpfosten und Querhoelzern
+    // Zwei Hoelzer, und die Trennung ist Absicht: was den Garten UMGIBT -
+    // Zaun, Torsaeulen, Schildpfaehle - ist grau verwittert; was IN ihm
+    // steht - die Gelaender an den steilen Wegen - ist warmes Holz.
+    pfostenGrau: 'img/pfosten-grau.jpg',
+    pfosten: 'img/pfosten.jpg', // Holz der Gelaender
     bordstein: 'img/bordstein.jpg',  // Kante rings um den Garten, 1,5 m je Kachel
     // Platzhalter fuer das Nadelkleid der Zypressen. Eine eigene Vorlage gibt
     // es noch nicht; die Wiesenkachel liest sich unter der Drehung und der
     // engen Wiederholung des Konfigurators als dichtes Gruen.
     zypresse: 'img/zypresse.jpg',
     wellen: 'water/waternormals.jpg',   // Normalkarte der Wasseroberflaeche
+    granit: 'img/granit.jpg',           // Treppenstufen, 1 m je Kachel
   };
   const maxAniso = renderer.capabilities.getMaxAnisotropy();
   const loader = new THREE.TextureLoader();

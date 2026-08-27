@@ -1816,12 +1816,14 @@ function bbVertex(instanziert){ return /* glsl */`
   }`; }
 
 function billboardMaterial(tex, instanziert){
-  return new THREE.RawShaderMaterial({
+  const m = new THREE.RawShaderMaterial({
     glslVersion: THREE.GLSL3,
     uniforms: {
       uKarte:   { value: tex },
       uFarbe:   { value: new THREE.Color(1, 1, 1) },
-      uSchnitt: { value: 0.5 }
+      uSchnitt: { value: 0.5 },
+      // WOHIN GEHT DAS BILD? Siehe unten in der Ausgabe.
+      uSRGB:    { value: 1 }
     },
     vertexShader: bbVertex(instanziert),
     fragmentShader: /* glsl */`
@@ -1830,6 +1832,7 @@ function billboardMaterial(tex, instanziert){
       uniform sampler2DArray uKarte;
       uniform vec3  uFarbe;
       uniform float uSchnitt;
+      uniform float uSRGB;
       in vec2  vUv;
       in float vSchicht;
       in float vLicht;
@@ -1866,7 +1869,17 @@ function billboardMaterial(tex, instanziert){
         // Gamma-Korrektur für die Ausgabe
         // lin *= vLicht * vLicht * vLicht * vLicht;
         lin *= vLicht;
-        ausgabe = vec4(pow(lin, vec3(1.0 / 2.2)), 1.0);
+        // NUR AUF DEN BILDSCHIRM WIRD IN sRGB AUSGEGEBEN.
+        //
+        // Ein RawShaderMaterial haengt three sein colorspace_fragment nicht
+        // an - was hier herauskommt, wird unveraendert geschrieben. Auf der
+        // Leinwand ist sRGB richtig. In ein RENDERZIEL aber (die Spiegelung im
+        // Wasser) schreiben alle uebrigen Materialien LINEAR, und das Ziel wird
+        // beim Lesen noch einmal konvertiert. Ein hier schon kodiertes Bild
+        // ginge damit zweimal durch die Kurve: aus 0,25 wuerde 0,53, aus 0,53
+        // wuerde 0,75 - das Laub im Spiegel verlor genau den Kontrast, den die
+        // Lichtkurve oben ihm gibt, und wirkte ausgewaschen und zu hell.
+        ausgabe = vec4(uSRGB > 0.5 ? pow(lin, vec3(1.0 / 2.2)) : lin, 1.0);
 /*
         vec3 ton = uFarbe * vTon;
         vec3 lin = pow(t.rgb, vec3(2.2));
@@ -1881,6 +1894,11 @@ function billboardMaterial(tex, instanziert){
     transparent: false,
     depthWrite: true
   });
+  // Kurz vor dem Zeichnen nachsehen, wohin gerade gezeichnet wird.
+  m.onBeforeRender = (renderer) => {
+    m.uniforms.uSRGB.value = renderer.getRenderTarget() === null ? 1 : 0;
+  };
+  return m;
 }
 
 // Tiefenmaterial für den Schattendurchgang. Ohne es rechnet three mit seinem
