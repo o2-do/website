@@ -187,6 +187,9 @@ function saveSettings() {
     gespeichert: new Date().toISOString(),
     werte: readRaw(),
     baumListe: dateien.has('baumListe') ? dateien.get('baumListe').daten : null,
+    // Die gesetzten Sammelmarken gehoeren zum Garten wie seine Einstellungen:
+    // `game.html` liest sie aus derselben Datei.
+    plaketten,
   };
   const url = URL.createObjectURL(new Blob([JSON.stringify(daten, null, 2)], { type: 'application/json' }));
   const a = document.createElement('a');
@@ -207,6 +210,8 @@ async function loadSettings(e) {
     }
     if (daten.baumListe) dateien.set('baumListe', { name: daten.werte.baumListe, daten: daten.baumListe });
     else dateien.delete('baumListe');
+    plaketten = Array.isArray(daten.plaketten) ? daten.plaketten : [];
+    plakettenNr = plaketten.reduce((a, p) => Math.max(a, +p.nr || 0), 0);
     writeRaw(daten.werte);
     applyLive();
     rebuild();
@@ -295,6 +300,8 @@ function schattenAnwenden(cfg) {
 /* ---------------- Aufbau ---------------- */
 
 let building = false;
+// Gesetzt, wenn der naechste Aufbau den Standpunkt behalten soll (siehe unten).
+let haltePose = null;
 const SPINNER_MIN_MS = 600;
 
 async function rebuild() {
@@ -314,6 +321,8 @@ async function rebuild() {
     const gewaehlt = dateien.get('baumListe');
     spinnerText.textContent = 'Baumliste …';
     cfg._baumListe = gewaehlt ? parseTreeList(gewaehlt.daten) : await fetchTreeList(cfg.baumListe);
+    // Von Hand gesetzt, nicht gewuerfelt - deshalb an cfg vorbei am Formular.
+    cfg._plaketten = plaketten;
 
     viewer.setFog(cfg.nebel);
     setTranslucency(cfg.transluzenz);
@@ -357,13 +366,22 @@ async function rebuild() {
     // Gartenkante - hinauslaufen soll man auch dann nicht.
     walker.setzeGrenze(cfg.zaun ? zaunRadius(cfg) - LAUFABSTAND_ZAUN : R);
 
-    // Start auf dem ersten Rundweg, Blick in Wegrichtung
-    const p0 = built.paths[0];
-    if (p0) {
-      const s = p0.samples[0];
-      walker.reset(s.x, s.z, Math.atan2(-s.tx, -s.tz));
+    // WER PLAKETTEN SETZT, BLEIBT STEHEN. Jede gesetzte Marke baut den Garten
+    // neu, und der Startpunkt am Rundweg waere dabei jedes Mal ein Sprung quer
+    // ueber die Wiese - man muesste nach jeder Marke zurueckgehen. `haltePose`
+    // traegt Standort UND Blickrichtung ueber den Aufbau.
+    if (haltePose) {
+      walker.reset(haltePose.x, haltePose.z, haltePose.yaw);
+      haltePose = null;
     } else {
-      walker.reset(0, 0, 0);
+      // Start auf dem ersten Rundweg, Blick in Wegrichtung
+      const p0 = built.paths[0];
+      if (p0) {
+        const s = p0.samples[0];
+        walker.reset(s.x, s.z, Math.atan2(-s.tx, -s.tz));
+      } else {
+        walker.reset(0, 0, 0);
+      }
     }
     viewer.birdFit(R);
     // Noch im Spinner: alle Shader uebersetzen. Danach kostet das erste
@@ -385,10 +403,13 @@ async function rebuild() {
       `Zaun ${stats.zaun.pfosten} Pfosten (r ${stats.zaun.radius} m, ` +
       `Umfang ${stats.zaun.umfang} m) · ` +
       `Raster ${stats.rasterBelegt}% belegt · Sektoren ${stats.sektoren} · ` +
+      (stats.plaketten ? `${stats.plaketten} Plaketten · ` : '') +
       `${Math.round(stats.dreiecke / 1000)}k Dreiecke · ${stats.meshes} Meshes`;
 
     // Der Aufbau dauert je nach Parametern unter 200 ms - ohne Mindeststandzeit
     // blitzt der Spinner nur auf und man sieht nicht, dass etwas passiert ist.
+    zeigePlakettenstand();
+
     const rest = SPINNER_MIN_MS - (performance.now() - tStart);
     if (rest > 0) await new Promise((r) => setTimeout(r, rest));
   } catch (err) {
@@ -531,6 +552,9 @@ const DBL_PX = 12;
 let lastClick = { t: -1e9, x: 0, y: 0 };
 
 canvas.addEventListener('click', (e) => {
+  // Im EDIT-Modus setzt schon der EINFACHE Klick - dort geht es ums Zielen,
+  // nicht ums Laufen.
+  if (editModus) { if (!warZiehen) plakettenKlick(e); return; }
   const now = performance.now();
   const paar = now - lastClick.t < DBL_MS
     && Math.abs(e.clientX - lastClick.x) < DBL_PX
@@ -606,6 +630,106 @@ document.getElementById('btn-bird').addEventListener('click', (e) => {
   schattenAnwenden(cfg);
   schattenEinbrennen(cfg);
 });
+
+/* ---------------- Plaketten setzen ---------------- */
+
+/**
+ * DER EDIT-MODUS.
+ *
+ * Solange er laeuft, setzt jeder Klick ins Bild eine Plakette dorthin, wo der
+ * Sehstrahl die Landschaft trifft - mit der Normalen der getroffenen Flaeche,
+ * damit sie in deren Schraeglage liegt. Ein Klick auf eine schon gesetzte
+ * Plakette nimmt sie wieder weg.
+ *
+ * Gespeichert wird ORT UND NORMALE, nicht ein Dreieck (siehe `plaketten.js`).
+ * Die Liste haengt am Formular wie eine Einstellung: sie ueberlebt einen
+ * Neuaufbau und geht mit „Einstellungen speichern" in die Datei.
+ */
+let plaketten = [];
+let plakettenNr = 0;
+let editModus = false;
+
+const editKnopf = document.getElementById('btn-edit');
+editKnopf.addEventListener('click', () => {
+  editModus = !editModus;
+  editKnopf.classList.toggle('aktiv', editModus);
+  editKnopf.textContent = editModus ? 'Plaketten: fertig' : 'Plaketten setzen';
+  canvas.style.cursor = editModus ? 'crosshair' : 'grab';
+  zeigePlakettenstand();
+});
+
+function zeigePlakettenstand() {
+  const el = document.getElementById('build-info');
+  if (!el || !editModus) return;
+  el.textContent = `Plaketten setzen: ${plaketten.length} gesetzt · `
+    + 'Klick ins Bild setzt eine, Klick auf eine vorhandene entfernt sie.';
+}
+
+// Welche Netze der Strahl treffen darf. Der Himmel, die Horizontscheibe und die
+// Kartenteile gehoeren nicht dazu - eine Plakette an der Horizontscheibe waere
+// einen halben Kilometer weit weg.
+// Ausgenommen sind auch die Netze, deren Form erst im Shader entsteht - Laub,
+// Fern-Tafeln und Grashalme. Ein Strahl trifft dort die zusammengeklappte
+// Geometrie am Ankerpunkt und nicht das, was man sieht.
+const NICHT_TREFFEN =
+  /^(himmel|horizont|kartenmaske|kartenkasten|unterlage|waldhorizont|wasser|tafeln|laub|gras_)/;
+
+function plakettenKlick(e) {
+  if (!garden) return;
+  const r = canvas.getBoundingClientRect();
+  _ndc.set(((e.clientX - r.left) / r.width) * 2 - 1,
+           -((e.clientY - r.top) / r.height) * 2 + 1);
+  _ray.setFromCamera(_ndc, viewer.camera);
+
+  // Erst pruefen, ob eine vorhandene Plakette getroffen ist - dann wird sie
+  // weggenommen statt eine zweite darauf zu setzen.
+  if (garden.plaketten) {
+    const treffer = _ray.intersectObject(garden.plaketten, false);
+    if (treffer.length) {
+      const i = treffer[0].instanceId;
+      if (i != null && plaketten[i]) {
+        plaketten.splice(i, 1);
+        haltePose = walker.pose;
+        rebuild();
+        return;
+      }
+    }
+  }
+
+  const ziele = [];
+  garden.group.traverse((o) => {
+    if (!o.isMesh || !o.visible || o === garden.plaketten) return;
+    if (NICHT_TREFFEN.test(o.name || '')) return;
+    ziele.push(o);
+  });
+  const treffer = _ray.intersectObjects(ziele, false);
+  if (!treffer.length) return;
+  const t = treffer[0];
+  // Die Normale kommt im Koordinatensystem des Netzes; fuer eine Instanz gilt
+  // zusaetzlich deren Matrix. `normalMatrix` des getroffenen Objekts reicht,
+  // solange nichts ungleichmaessig skaliert ist - das ist hier nirgends so.
+  const n = new THREE.Vector3(0, 1, 0);
+  if (t.face) {
+    n.copy(t.face.normal);
+    if (t.instanceId != null && t.object.isInstancedMesh) {
+      const im = new THREE.Matrix4();
+      t.object.getMatrixAt(t.instanceId, im);
+      n.transformDirection(im);
+    }
+    n.transformDirection(t.object.matrixWorld);
+  }
+  plaketten.push({
+    nr: ++plakettenNr,
+    x: +t.point.x.toFixed(3), y: +t.point.y.toFixed(3), z: +t.point.z.toFixed(3),
+    nx: +n.x.toFixed(4), ny: +n.y.toFixed(4), nz: +n.z.toFixed(4),
+  });
+  // Ohne Neuaufbau: die neue Marke gleich ins bestehende Netz haengen waere
+  // moeglich, aber das Netz hat eine feste Instanzzahl. Ein Neuaufbau ist beim
+  // Setzen von Hand schnell genug und haelt die Sache einfach - der Standpunkt
+  // bleibt dabei stehen.
+  haltePose = walker.pose;
+  rebuild();
+}
 
 /* ---------------- Frame ---------------- */
 

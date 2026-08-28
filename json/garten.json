@@ -1,7 +1,7 @@
 {
   "typ": "gartensimulator",
   "version": 1,
-  "gespeichert": "2026-08-26T20:26:41.717Z",
+  "gespeichert": "2026-08-27T20:14:58.159Z",
   "werte": {
     "seed": "garten-lvq8o8",
     "maxNeigung": 40,
@@ -95,5 +95,16 @@
     "drahtgitter": false,
     "horizont": 600
   },
-  "baumListe": null
+  "baumListe": null,
+  "plaketten": [
+    {
+      "nr": 1,
+      "x": 32.052,
+      "y": -0.873,
+      "z": 3.459,
+      "nx": 0.0008,
+      "ny": 1,
+      "nz": 0.0094
+    }
+  ]
 }

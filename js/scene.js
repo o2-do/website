@@ -191,7 +191,7 @@ export function createViewer(canvas) {
   let seiten = 1;                          // Seitenverhaeltnis des Canvas
 
   let active = walkCam;
-  const state = { onFrame: null, last: performance.now(), fps: 0, frames: 0, fpsT: 0 };
+  const state = { onFrame: null, last: performance.now(), fps: 0, frames: 0, fpsT: 0, warm: false };
 
   // Die Vogelperspektive ist eine Landkarte, keine Landschaft: kein Himmel,
   // kein Nebel, kein Wald, weisser Grund. Die weite Wiesenscheibe bis zum
@@ -263,6 +263,11 @@ export function createViewer(canvas) {
 
   function loop(now) {
     requestAnimationFrame(loop);
+    // Waehrend der Shader-Vorlauf laeuft, ruht alles: er schaltet dafuer die
+    // ganze Szene sichtbar und danach wieder aus, und was die Bildschleife
+    // dazwischen an Sichtbarkeit setzt, wuerde er mit zurueckstellen (siehe
+    // `waermeShader`). Der Spinner steht ohnehin davor.
+    if (state.warm) { state.last = now; return; }
     const dt = Math.min(0.05, (now - state.last) / 1000);
     state.last = now;
     state.frames++;
@@ -438,6 +443,7 @@ export function createViewer(canvas) {
       // Gras jenseits der Sichtweite, die Teile, die nur die Karte zeigt.
       // Genau die tauchen spaeter beim Umsehen zum ersten Mal auf, und dann
       // waere die Uebersetzung wieder da, wo sie nicht hingehoert.
+      state.warm = true;
       const stand = [];
       scene.traverse((o) => { if (!o.visible) { stand.push(o); o.visible = true; } });
       // UND ZWEIMAL, EINMAL JE FARBRAUM. Der Wasserspiegel zeichnet die Szene in
@@ -456,6 +462,7 @@ export function createViewer(canvas) {
         renderer.setRenderTarget(null);
         hilfsziel.dispose();
         for (const o of stand) o.visible = false;
+        state.warm = false;
       }
       return renderer.info.programs.length - vorher;
     },

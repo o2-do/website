@@ -3,19 +3,19 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Landschaftssimulator</title>
-  <link rel="stylesheet" href="css/style.css">
+  <title>Der virtuelle Garten</title>
+
+  <!-- Bootstrap liegt lokal wie three.js: der Garten soll offline laufen. -->
+  <link rel="stylesheet" href="vendor/bootstrap.min.css">
+  <link rel="stylesheet" href="css/game.css">
   <script type="importmap">
   { "imports": { "three": "./vendor/three.module.js" } }
   </script>
   <!--
-    Der Baumgenerator (baumloader/baum-import.js) ist ein ES-Modul und wird von
-    js/baumloader.js importiert - er braucht hier nichts.
-
-    Der Pflanzen-Konfigurator dagegen ist noch eine klassische Datei und
-    erwartet three.js als globales THREE. Deshalb erst das Modul, das THREE
-    global hinterlegt, dann die Loader mit defer, dann main.js: aufgeschobene
-    klassische Dateien und Module laufen in Dokumentreihenfolge.
+    Der Baumgenerator ist ein ES-Modul und wird importiert. Der
+    Pflanzen-Konfigurator ist noch eine klassische Datei und erwartet THREE als
+    Global; aufgeschobene klassische Dateien und Module laufen in
+    Dokumentreihenfolge, damit steht THREE sicher vor ihnen.
   -->
   <script type="module">
     import * as THREE from 'three';
@@ -25,32 +25,103 @@
   <script defer src="plantloader/geometry.js"></script>
   <script defer src="plantloader/gartenloader.js"></script>
 </head>
-<body>
+<body class="bg-light">
 
-<div class="stage">
-  <canvas id="view"></canvas>
+<main class="container-lg py-4">
+  <div class="szene">
+    <div class="buehne rounded-3 shadow-sm mb-3">
+      <canvas id="view"></canvas>
 
-  <div id="hud" class="hud"></div>
+      <button id="btn-karte" type="button" class="karte-knopf"
+              title="Zwischen Augenhöhe und Karte umschalten">
+        <img src="img/karte.jpg" alt="Karte">
+      </button>
 
-  <div id="spinner" class="spinner-overlay">
-    <div class="spinner"></div>
-    <div id="spinner-text" class="spinner-text">Garten wird gebaut …</div>
+      <div class="steuerkreuz">
+        <button id="btn-forward" type="button" class="btn vor"     title="1 m vorwärts">↑</button>
+        <button id="btn-left"    type="button" class="btn links"   title="30° nach links">←</button>
+        <button id="btn-back"    type="button" class="btn zurueck" title="1 m rückwärts">↓</button>
+        <button id="btn-right"   type="button" class="btn rechts"  title="30° nach rechts">→</button>
+      </div>
+
+      <!-- Die gefundene Plakette: unten links im Bild, solange eine in
+           Reichweite ist. Ein Klick darauf sammelt sie ein - dasselbe wie die
+           Leertaste. -->
+      <button id="plakette-knopf" type="button" class="plakette-knopf" hidden
+              title="Plakette einsammeln (Leertaste)">
+        <img src="./img/plakette.jpg" alt="Plakette">
+        <span id="plakette-nr" class="plakette-nr"></span>
+      </button>
+
+      <div id="spinner" class="spinner-overlay">
+        <div class="spinner-border text-secondary" role="status"></div>
+        <div id="spinner-text" class="text-secondary small">Garten wird gebaut …</div>
+      </div>
+    </div>
   </div>
-</div>
 
-<div class="navbar">
-  <button id="btn-left"    class="nav" title="30° links drehen (Pfeil links)">↰&nbsp;30°</button>
-  <button id="btn-forward" class="nav" title="1 m vorwärts (Pfeil hoch)">↑&nbsp;1&nbsp;m</button>
-  <button id="btn-back"    class="nav" title="1 m rückwärts (Pfeil runter)">↓&nbsp;1&nbsp;m</button>
-  <button id="btn-right"   class="nav" title="30° rechts drehen (Pfeil rechts)">30°&nbsp;↱</button>
-  <span class="queue">Warteschlange <b id="queue-count">0</b>/<span id="queue-max">2</span></span>
-  <span class="spacer"></span>
-  <span class="queue">Ziehen = umsehen · Doppelklick = 1 m dorthin, in der Karte hinspringen</span>
-  <button id="btn-bird" class="nav ghost" title="Übersicht von oben">Vogelperspektive</button>
-</div>
+  <div class="row g-4">
+    <div class="col-lg-9" id="content">
+      <h1 class="h1">Der "Virtuelle Garten"</h1>
+      <p class="lead">Ein KI-gestütztes Vibe-Coding-Projekt.</p>
+      <p>
+        Fast alles im Garten entsteht durch Algorithmen: Höhenprofil, Wege, Bäume, Pflanzen, Felsen, See.<br>
+        Der Garten hat daher unzählige Varianten. Jeder Klick auf "Neuen Garten erstellen" generiert einen Garten, den wahrscheinlich niemand außer dir zu sehen bekommt.
+      </p>
+      <p><a href="programmierung.html">Mehr zur Programmierung</a></p>
+      <p class="pt-3">
+        <a href="#" id="btn-neu" class="btn btn-primary">Neuen Garten erstellen</a>
+      </p>
 
-<form id="params" class="params"></form>
+      <div style="height:50px;"></div>
 
-<script type="module" src="js/main.js"></script>
+      <h2 class="h2">Steuerung und Navigation</h2>      
+      <h3 class="h4 mt-4">LAUFMODUS</h3>
+      <p>
+        Doppelklick mit der Maus in die gewünschte Laufrichtung.<br>
+        Ziehen zum Umschauen.<br>
+        Mausrad zum Zoomen.<br>
+        Alternativ: Laufen mit den Pfeiltasten oder "w", "a", "s", "d".
+      </p>
+
+      <h3 class="h4 mt-4">VOGELPERSPEKTIVE</h3>
+      <p>
+        Klick auf das Kartensymbol oben rechts.<br>
+        In der Vogelperspektive siehst du den ganzen Garten, drehbar und zoombar mit der Maus.<br>
+        Doppelklick setzt deine Position neu.<br>
+        Alternativ: Taste "v" zum Wechseln zwischen Vogelperspektive und Laufmodus.
+      </p>
+
+      <h3 class="h4 mt-4">SPIELMODUS</h3>
+      <p>
+        Im ausgewählten Garten auf der Startseite wartet eine <a href="game.html">Schnitzeljagd</a>: 10 versteckte Plaketten gilt es einzusammeln.
+        Jede Plakette enthält einen Hinweis, wo sich die nächste versteckt.<br>
+        Das Spiel ist gewonnen, wenn alle 10 Plaketten eingesammelt sind.
+      </p>
+      <p>
+        Bist du nah genug an einer Plakette, erscheint das Plaketten-Symbol unten links in der Szene.<br>
+        Klick darauf oder drücke die Leertaste zum Einsammeln.<br>
+        Unterhalb der Szene erscheint dann ein Hinweis auf die nächste Plakette.
+      </p>
+    </div>
+
+    <div class="col-lg-3">
+      <div id="side-content" class="mb-4">
+
+      </div>
+
+      <h3 class="h3">Schnitzeljagd</h3>
+      <p class="pt-2">
+        10 versteckte Plaketten gilt es einzusammeln.
+      </p>
+      <div class="pt-2">
+        <a href="game.html" class="btn btn-primary">Spiel starten</a>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<script type="module" src="js/game.js"></script>
 </body>
 </html>

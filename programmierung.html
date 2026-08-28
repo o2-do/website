@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Virtueller Garten | Programmierung</title>
+
+  <link rel="stylesheet" href="vendor/bootstrap.min.css">
+</head>
+<body class="bg-light">
+
+<main class="container-lg py-4">
+  <div class="szene">
+    BILD
+  </div>
+
+  <div class="row g-4">
+    <div class="col-lg-9" id="content">
+      <h1 class="h1">Programmierung</h1>
+      <h2 class="h5">Höhen</h2>
+      <p>
+        Die Terrain-Höhen entstehen durch überlagerte Sinuswellen. Darüber spannt eine Wiese in 50 cm großen Segmenten.
+      </p>
+      
+      <h2 class="h5 mt-3">Wege</h2>
+      <p>
+        <p>Der Rundweg ist eine Zufallslinie durch 26 Punkte in einem 8x8-Raster (ohne die 12 Eckpunkte). Ein 2-Opt-Algorithmus aus der Klasse der lokalen Suchheuristiken entwirrt den Pfad (Nearest-Neighbor), bis keine Überschneidungen mehr bestehen.</p>
+        <p>Für Abkürzungen werden anschließend Stellen identifiziert, die räumlich nah, aber auf dem Rundweg weit voneinander entfernt liegen.</p>
+        <p>Die Wege werden über die Höhenkarte gelegt, die Wegränder auf Höhe der Wegmitte gezogen (seitlich horizontale Wege). Die Abkürzungen gleichen sich dabei über die letzten Meter der Schräge an. Zuletzt wird das Gelände seitlich der Wege über 2 m angeglichen, um harte Knicke zu vermeiden.</p>
+        <p>Felsen, Beete und Bäume werden nach speziellen Kriterien entlang der Wege platziert; ein Raster registriert belegte Plätze.</p>
+      </p>
+
+      <h2 class="h5 mt-3">Bäume</h2>
+      <p>
+        Der erste Versuch eines Baumgenerators berechnete jedes Blatt und jeden Zweig des Baumes. Das wirkte zwar realistisch, war für einen
+        Online-Spaziergang durch den Garten aber nicht performant genug.
+      </p>
+      <p>
+        Im zweiten Versuch nutzte ich nur noch Screenshots ganzer Zweigbüschel aus dem ersten Generator und spannte diese mittels Billboards um ein reduziertes
+        Baumgerüst. Billboards sind Leinwände, die immer zur Kamera gedreht werden.
+      </p>
+      <p>
+        Ein klassischer Space-Colonisation-Algorithmus lieferte bei dem reduzierten Baumgerüst keine brauchbaren Ergebnisse.
+        Deshalb wurde der Algorithmus umgekehrt: Er sucht nun von den Attraktoren aus die nächsten Nachbarn, um sie in Richtung Stamm zu verbinden.
+      </p>
+      <p>
+        An den Attraktoren hängen die Billboards. Jedes Billboard zeigt ein Büschel mit ca. 50 Blättern.
+      </p>
+      <p>
+        Eine Erkenntnis: Organische Strukturen wirken realistischer durch einen gewissen Anteil an Chaos –
+        bewusste Unregelmäßigkeiten und Störstellen. So sind die Attraktoren durch überlagerte Wellen verschoben,
+        die Baumkrone ist nicht symmetrisch. Manuell wurden einzelne Zweige der ausgewählten Bäume entfernt.
+      </p>
+
+      <h2 class="h5 mt-3">Pflanzen</h2>
+      <p>Alle Pflanzen – ob Schilf oder Blume – stammen aus demselben Algorithmus. Ein Blatt ist definiert durch untere, mittlere und obere Breite und wächst in einem bestimmten Winkel aus dem Boden. Vertikal ist es in Segmente unterteilt, die wiederum im Winkel zueinander stehen. Die Gesamtanzahl der Blätter ist variabel und bildet ein um ein Zentrum angeordnetes Büschel.</p>
+      <p>Blüten und Kolben folgen demselben Prinzip: ein Sechskantrohr mit zwei spitzen Enden am Ende eines Stiels. Auch hier sorgt der Zufall für den realistischen Eindruck – die Längen sind zufällig gekürzt, sonst stünden alle Kolben auf gleicher Höhe.</p>
+
+      <h2 class="h5 mt-3">Felsen</h2>
+      <p>Künstlich verformte Kugeln, in Gruppen zusammengefasst und über den Garten verteilt. Die Hälfte steckt unterhalb der Oberfläche.</p>
+
+      <h2 class="h5 mt-3">Trreppen</h2>
+      <p>Stufen werden dort platziert, wo der Weg eine Steigung von über 20° hat.</p>
+
+      <h2 class="h5 mt-3">Geländer</h2>
+      <p>Geländer werden dort platziert, wo der Hang neben dem Weg steil abfällt.</p>
+
+      <h2 class="h5 mt-3">Plaketten im Spielemodus</h2>
+      <p>Manuell platziert.</p>
+
+      <h2 class="h5 mt-3">Genutzte KI:</h2>
+      <p>
+        Hauptsächlich Claude Opus 5 (2 Pro-Abos verbraucht),<br>
+        Gemini 3.1 Preview für kleinere Detailaufgaben.
+      </p>
+
+    </div>
+
+    <div class="col-lg-3">
+      <a href="index.html" class="btn btn-primary btn-sm">Zur Startseite</a>
+    </div>
+  </div>
+
+</main>
+
+</body>
+</html>

@@ -76,7 +76,7 @@ const TOR_LUECKE   = 2;          // wie viele Zaunfelder das Tor ersetzt
 // Wie viel steiler als die flachste Stelle eine noch sein darf, um bei der
 // Parallelitaet mitzureden. Groesser heisst: Parallelitaet zaehlt mehr.
 const TOR_FLACH_TOLERANZ = 0.20;
-const TOR_SCHRIFT  = '#aa8833';
+const TOR_SCHRIFT  = '#745f2c';
 
 /**
  * Wo das Tor steht.
@@ -717,7 +717,7 @@ function schildMaterial(textur, text, laenge, drahtgitter) {
 
   // Untergrund: dieselbe Maserung wie das uebrige Holz, in derselben
   // Kachelgroesse wie am Zaun. Fehlt das Bild noch, bleibt es beim Braun.
-  ctx.fillStyle = '#6b5334';
+  ctx.fillStyle = '#ab895c';
   ctx.fillRect(0, 0, w, h);
   const bild = textur && textur.image;
   if (bild && bild.width) {

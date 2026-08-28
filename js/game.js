@@ -10,6 +10,7 @@ import { setTranslucency } from './translucency.js';
 import { aktualisiereGrasSicht } from './grass.js';
 import { frisch } from './frisch.js';
 import { zaunRadius, PFOSTEN_D } from './zaun.js';
+import { plaketteInReichweite, nimmPlakette, setzePlakettenStand } from './plaketten.js';
 
 /**
  * Der Spieleinstieg (`game.html`).
@@ -105,11 +106,16 @@ window.addEventListener('garten-ausgang', (e) => exitGarden(e.detail));
 
 /* ---------------- Einstellungen ---------------- */
 
+let plaketten = [];
+
 async function ladeEinstellungen(url) {
   const r = await fetch(frisch(url), { cache: 'no-cache' });
   if (!r.ok) throw new Error(`„${url}“ liess sich nicht laden (${r.status}).`);
   const d = await r.json();
   if (!d || !d.werte) throw new Error(`„${url}“ ist keine Einstellungsdatei.`);
+  // Die Sammelmarken stehen in derselben Datei wie die Einstellungen; gesetzt
+  // wurden sie im Konfigurator (siehe `plaketten.js`).
+  plaketten = Array.isArray(d.plaketten) ? d.plaketten.map((p) => ({ ...p, weg: false })) : [];
   return { ...defaults(), ...d.werte };
 }
 
@@ -128,6 +134,7 @@ async function rebuild() {
   try {
     const cfg = normalize(rohwerte);
     cfg._baumListe = await fetchTreeList(cfg.baumListe);
+    cfg._plaketten = plaketten;
     grasWeite = cfg.grasWeite;
 
     viewer.setFog(cfg.nebel);
@@ -147,6 +154,11 @@ async function rebuild() {
     // Was den Weg verstellt: Staemme, Felsen, Zypressen, Wasser, Gelaender.
     // Beete und Wege stehen bewusst NICHT darin - durch ein Beet laeuft man.
     walker.setzeHindernis((x, z) => built.hindernisse.belegt(x, z));
+    // Ein neuer Garten baut alle Marken wieder auf - was schon gefunden war,
+    // bleibt gefunden.
+    if (built.plaketten) {
+      setzePlakettenStand(built.plaketten, plaketten.filter((q) => q.weg).map((q) => q.nr));
+    }
 
     viewer.setForest(texturen.wald, cfg.waldRadius, cfg.waldHoehe, cfg.wald);
     viewer.setViewParts(
@@ -165,6 +177,7 @@ async function rebuild() {
     // sichtbare Objekt den Hauptfaden an (siehe `waermeShader` in scene.js).
     spinnerText.textContent = 'Shader …';
     await viewer.waermeShader();
+    zeigeGesammelt();
   } catch (err) {
     console.error(err);
     spinnerText.textContent = 'Fehler beim Aufbau: ' + err.message;
@@ -222,7 +235,12 @@ bind('btn-karte', () => {
   schattenAnwenden(normalize(rohwerte));
 });
 
-bind('btn-neu', () => {
+// DELEGIERT, nicht fest gebunden: der Inhaltsbereich wird beim Einsammeln
+// ausgetauscht, und die nachgeladenen Seiten bringen denselben Knopf wieder mit.
+document.addEventListener('click', (e) => {
+  const a = e.target.closest && e.target.closest('#btn-neu');
+  if (!a) return;
+  e.preventDefault();
   rohwerte = { ...rohwerte, seed: 'garten-' + Math.random().toString(36).slice(2, 8) };
   if (viewer.isBird()) {
     viewer.setCamera('walk');
@@ -240,6 +258,13 @@ const RICHTUNG = {
 window.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
   if (e.ctrlKey || e.metaKey || e.altKey) return;
+  // Leertaste: die Plakette in Reichweite einsammeln. Sie kommt vor der
+  // Laufsteuerung, damit ein Druck nicht beides tut.
+  if (e.code === 'Space' || e.key === ' ') {
+    e.preventDefault();
+    sammlePlakette();
+    return;
+  }
   const was = RICHTUNG[e.key.length === 1 ? e.key.toLowerCase() : e.key];
   if (!was) return;
   e.preventDefault();
@@ -346,6 +371,187 @@ canvas.addEventListener('wheel', (e) => {
 
 /* ---------------- Frame ---------------- */
 
+/* ---------------- Plaketten einsammeln ---------------- */
+
+/**
+ * WAS GREIFBAR IST, ZEIGT SICH.
+ *
+ * Je Bild wird gesucht, ob eine Plakette naeher als zwei Meter und im Blickfeld
+ * liegt (siehe `plaketteInReichweite`). Ist eine da, erscheint sie unten links
+ * im Bild; die Leertaste oder ein Klick darauf sammelt sie ein.
+ *
+ * Die Suche laeuft ueber die Liste, nicht ueber die Szene - es sind eine
+ * Handvoll Marken, und ein Abstand ist billiger als ein Strahl.
+ */
+const plakettenKnopf = document.getElementById('plakette-knopf');
+const plakettenNrFeld = document.getElementById('plakette-nr');
+let greifbar = -1;
+
+function zeigeGreifbar(i) {
+  if (i === greifbar) return;
+  greifbar = i;
+  if (i < 0) { plakettenKnopf.hidden = true; return; }
+  plakettenNrFeld.textContent = plaketten[i] ? plaketten[i].nr : '';
+  plakettenKnopf.hidden = false;
+}
+
+/* ---------------- Seiteninhalt ---------------- */
+
+const inhalt = document.getElementById('content');
+const seite = document.getElementById('side-content');
+
+/**
+ * Ein geladenes Bruchstueck in einen Container haengen.
+ *
+ * Die Seitendateien (`plakette-1.html`, `gameover.html`) bringen ihre eigene
+ * Spalte mit (`<div class="col-lg-9">`). Der Container IST aber schon die
+ * Spalte - eine zweite darin machte den Text drei Viertel so breit. Traegt das
+ * Bruchstueck also genau ein Wurzelelement mit einer Spaltenklasse, wird dessen
+ * Inhalt genommen und die Huelle weggelassen.
+ */
+function setzeInhalt(ziel, html) {
+  if (!ziel) return;
+  const h = document.createElement('div');
+  h.innerHTML = html;
+  const kinder = [...h.children];
+  if (kinder.length === 1 && /\bcol(-|\b)/.test(kinder[0].className || '')) {
+    ziel.innerHTML = kinder[0].innerHTML;
+  } else {
+    ziel.innerHTML = html;
+  }
+}
+
+/** Eine Seite nachladen. Faellt sie aus, bleibt stehen, was dasteht. */
+async function ladeSeite(url, ziel = inhalt) {
+  try {
+    const r = await fetch(frisch(url), { cache: 'no-cache' });
+    if (!r.ok) throw new Error(String(r.status));
+    setzeInhalt(ziel, await r.text());
+    ziel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return true;
+  } catch (err) {
+    console.warn(`„${url}“ liess sich nicht laden:`, err.message);
+    return false;
+  }
+}
+
+/**
+ * DIE SEITENSPALTE FUEHRT BUCH.
+ *
+ * Bis zur ersten Marke steht dort der Begleittext; sobald eine eingesammelt
+ * ist, tritt an seine Stelle die Sammlung - je Marke ein Symbol mit ihrer
+ * Nummer, das ihre Seite wieder aufruft. So bleibt der Hinweis, den sie
+ * getragen hat, nachlesbar.
+ */
+function zeigeGesammelt() {
+  if (!seite) return;
+  const alle = plaketten.length;
+  const weg = plaketten.filter((p) => p.weg);
+  if (!weg.length) return;                       // noch nichts: Text bleibt stehen
+  const marken = weg.map((p) => `
+    <a class="plakette-link" href="#" data-plakette="${p.nr}"
+       title="Plakette ${p.nr} noch einmal ansehen">
+      <img src="./img/plakette.jpg" alt="Plakette ${p.nr}">
+      <span class="badge rounded-pill">${p.nr}</span>
+    </a>`).join('');
+  seite.innerHTML = `
+    <h2 class="h6">Gesammelt: ${weg.length} von ${alle}</h2>
+    <div class="plakette-liste">${marken}</div>`;
+}
+
+// Ein Klick auf ein Sammlungssymbol holt die Seite zurueck. Delegiert, weil die
+// Symbole erst entstehen, wenn eine Marke gefunden wurde.
+document.addEventListener('click', (e) => {
+  const a = e.target.closest && e.target.closest('[data-plakette]');
+  if (!a) return;
+  e.preventDefault();
+  ladeSeite(`plakette-${a.dataset.plakette}.html`);
+});
+
+/**
+ * ALLE GEFUNDEN. Der Haken fuer das Spielende; er laedt `gameover.html` in
+ * denselben Container wie die Plakettenseiten.
+ */
+window.gameOver = async function gameOver() {
+  await ladeSeite('gameover.html');
+};
+
+/* ---------------- Spielstand ---------------- */
+
+const STAND_SCHLUESSEL = 'garten-spielstand';
+
+/**
+ * Den Stand auslesen und in den lokalen Speicher legen: wo man steht, wohin man
+ * schaut, und welche Marken schon gefunden sind.
+ */
+window.getSpielstand = function getSpielstand() {
+  const p = walker.pose;
+  const stand = {
+    x: +p.x.toFixed(3), z: +p.z.toFixed(3), yaw: +p.yaw.toFixed(4),
+    gesammelt: plaketten.filter((q) => q.weg).map((q) => q.nr),
+  };
+  try {
+    localStorage.setItem(STAND_SCHLUESSEL, JSON.stringify(stand));
+    melde(`gesichert · ${stand.gesammelt.length} Plaketten`);
+  } catch (err) {
+    melde('konnte nicht gesichert werden');
+  }
+  return stand;
+};
+
+/** Und zurueck: Standort, Blickrichtung und die Sammlung. */
+window.setSpielstand = function setSpielstand() {
+  let stand = null;
+  try { stand = JSON.parse(localStorage.getItem(STAND_SCHLUESSEL) || 'null'); }
+  catch { stand = null; }
+  if (!stand) { melde('kein Spielstand vorhanden'); return null; }
+  if (garden && garden.plaketten) setzePlakettenStand(garden.plaketten, stand.gesammelt);
+  else plaketten.forEach((q) => { q.weg = (stand.gesammelt || []).includes(q.nr); });
+  // Das Intro darf nicht dazwischenfunken - wer laedt, will genau dort stehen.
+  intro = false;
+  introRest = 0;
+  walker.setzeGrenze(grenzeSoll);
+  walker.reset(stand.x, stand.z, stand.yaw);
+  zeigeGreifbar(-1);
+  zeigeGesammelt();
+  melde(`geladen · ${(stand.gesammelt || []).length} Plaketten`);
+  return stand;
+};
+
+function melde(text) {
+  const el = document.getElementById('spielstand-hinweis');
+  if (el) el.textContent = text;
+}
+
+/**
+ * Einsammeln. Die Marke verschwindet aus der Szene, das Spiel erfaehrt es ueber
+ * `addPlakette(nr)`, und ihre Seite tritt in den Inhaltsbereich - dort steht
+ * der Hinweis auf die naechste.
+ */
+async function sammlePlakette() {
+  if (greifbar < 0 || !garden || !garden.plaketten) return;
+  const i = greifbar;
+  const pl = plaketten[i];
+  nimmPlakette(garden.plaketten, i);
+  zeigeGreifbar(-1);
+  if (pl && typeof window.addPlakette === 'function') window.addPlakette(pl.nr);
+  zeigeGesammelt();
+  if (pl) await ladeSeite(`plakette-${pl.nr}.html`);
+  // Die letzte Marke beendet das Spiel; ihre Seite bleibt ueber die Sammlung
+  // in der Seitenspalte erreichbar.
+  if (plaketten.length && plaketten.every((q) => q.weg)) window.gameOver();
+}
+
+plakettenKnopf.addEventListener('click', (e) => { e.preventDefault(); sammlePlakette(); });
+
+// Platzhalter, bis das Spiel den Haken ersetzt. Er wird nicht ueberschrieben,
+// wenn schon einer da ist.
+if (typeof window.addPlakette !== 'function') {
+  window.addPlakette = (nr) => { console.log('Plakette', nr, 'eingesammelt'); };
+}
+
+/* ---------------- Frame ---------------- */
+
 let wasserZeit = 0;
 
 viewer.onFrame((dt) => {
@@ -371,7 +577,11 @@ viewer.onFrame((dt) => {
     // Halme jenseits der Sichtweite: je Sektor, nicht je Halm (siehe grass.js).
     aktualisiereGrasSicht(garden.grasNetze, viewer.camera, grasWeite, viewer.isBird());
   }
+  // In der Karte wird nichts eingesammelt - dort steht man nicht davor.
   const pose = walker.pose;
+  zeigeGreifbar(garden && !viewer.isBird() && !intro
+    ? plaketteInReichweite(plaketten, viewer.camera, garden.hf.heightAt(pose.x, pose.z))
+    : -1);
   updateMarks(
     walkerMark, signMarks, viewer.birdCam, pose,
     garden ? garden.hf.heightAt(pose.x, pose.z) : 0,

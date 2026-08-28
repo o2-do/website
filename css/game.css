@@ -1,0 +1,150 @@
+body, .btn {
+  font-size:1.3rem;
+}
+.szene { /* packt Buehe und Steuerung zusammen, in Mobile überschnitten */
+  position: relative;
+  padding-bottom: 100px;
+}
+.buehne {
+  aspect-ratio: 16 / 9;
+  min-height: 320px;
+  background: #ccddff;                 /* Nebelfarbe der Szene */
+  overflow: hidden;
+}
+.buehne canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+
+/* Das Kartensymbol liegt ueber dem Bild, oben rechts. */
+.karte-knopf {
+  position: absolute; top: 1rem; right: 1rem;
+  width: 64px; height: 64px; padding: 0;
+  border-radius: .5rem; overflow: hidden;
+  border: 2px solid rgba(255,255,255,.85);
+  box-shadow: 0 .25rem .75rem rgba(0,0,0,.3);
+  background: #fff;
+}
+.karte-knopf img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.karte-knopf.aktiv { border-color: var(--bs-primary); }
+
+/* Die Plakette in Reichweite: unten links, gegenueber dem Steuerkreuz.
+    Sie taucht nur auf, wenn wirklich eine greifbar ist - deshalb faellt sie
+    auf, ohne dauernd im Bild zu stehen. */
+.plakette-knopf {
+  position: absolute; left: 1rem; bottom: 1rem;
+  width: 64px; height: 41px; padding: 0;
+  border-radius: .5rem; overflow: hidden;
+  border: 2px solid #eecc00;
+  box-shadow: 0 .25rem .75rem rgba(0,0,0,.35);
+  background: #eecc00;
+  z-index: 5;
+  animation: plakette-auf .25s ease-out;
+}
+.plakette-knopf img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.plakette-nr {
+  position: absolute; right: 2px; bottom: 1px;
+  font-size: .7rem; line-height: 1; color: #232323;
+  background: rgba(238,204,0,.85); border-radius: .25rem; padding: 0 .2rem;
+}
+@keyframes plakette-auf { from { transform: scale(.6); opacity: 0; } }
+@media (max-width: 991.98px) {
+  .plakette-knopf { left: .75rem; bottom: .75rem; width: 52px; height: 52px; }
+}
+
+/* Die Liste der gesammelten Plaketten in der Seitenspalte: je Marke ein
+    kleiner Block mit Symbol und Nummer, der ihre Seite wieder aufruft. */
+.plakette-liste { display: flex; flex-wrap: wrap; gap: .5rem; }
+.plakette-link {
+  position: relative; display: block; width: 56px; height: 56px;
+  border-radius: .4rem; overflow: hidden;
+  border: 2px solid #eecc00; background: #eecc00;
+  text-decoration: none;
+}
+.plakette-link img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.plakette-link .badge {
+  position: absolute; right: 2px; bottom: 2px;
+  background: #232323; color: #eecc00; font-size: .65rem;
+}
+.plakette-link:hover { box-shadow: 0 0 0 .2rem rgba(238,204,0,.4); }
+
+/* Steuerkreuz: drei Spalten, zwei Zeilen - vor oben mittig, links/rechts
+    daneben, zurueck darunter. Ein Raster ist hier ehrlicher als vier
+    nebeneinandergestellte Knoepfe: die Anordnung IST die Bedeutung.
+
+    Es liegt IM BILD, am unteren Rand. Darunter waere es auf einem Telefon
+    ausserhalb des Sichtfelds, und man sieht beim Laufen nicht, wohin man
+    laeuft. Durchsichtiger Grund mit weisser Kante: die Landschaft bleibt
+    dahinter zu sehen, und weiss liest sich vor Gruen wie vor Himmel. */
+.steuerkreuz {
+  position: absolute;
+  left: 50%; bottom: 1rem;
+  transform: translateX(-50%);
+  display: grid;
+  grid-template-columns: repeat(3, 3.5rem);
+  grid-template-rows: repeat(2, 3.5rem);
+  gap: .4rem;
+  z-index: 4;
+}
+.steuerkreuz .btn {
+  font-size: 1.5rem; line-height: 1; padding: 0;
+  border: 2px solid #999;
+  border-radius: .5rem;
+  color: #666;
+  background: #fff;
+}
+.steuerkreuz .btn:hover,
+.steuerkreuz .btn:active {
+  color: var(--bs-primary);
+  border-color: var(--bs-primary);
+  background: #fff;
+}
+.steuerkreuz .vor    { grid-area: 1 / 2; }
+.steuerkreuz .links  { grid-area: 2 / 1; }
+.steuerkreuz .zurueck{ grid-area: 2 / 2; }
+.steuerkreuz .rechts { grid-area: 2 / 3; }
+
+.spinner-overlay {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: .75rem;
+  background: rgba(255,255,255,.85);
+  z-index: 5;
+}
+.spinner-overlay[hidden] { display: none; }
+
+/* AUF DEM TELEFON RANDLOS. Die Buehne fuellt den Bildschirm, der Text
+    rutscht darunter. Gemessen wird an der Breite und nicht an der
+    Ausrichtung: ein quer gehaltenes Telefon ist immer noch ein Telefon,
+    und beide Formate sollen randlos sein.
+
+    `dvh` und nicht `vh`: auf einem Telefon faehrt die Adressleiste beim
+    Scrollen ein und aus, und `vh` rechnet mit dem groesseren Zustand -
+    das Bild waere dann bis zum Einfahren unten abgeschnitten. */
+@media (max-width: 991.98px) {
+  main.container-lg { padding: 0 !important; max-width: none; }
+  .szene {
+    padding-bottom: 0px;
+  }
+  .buehne {
+    aspect-ratio: auto;
+    height: 100dvh;
+    min-height: 0;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    margin-bottom: 0 !important;
+  }
+  /* Was unter der Buehne steht, bekommt seinen Rand zurueck. */
+  main.container-lg > .row { padding: 1.5rem 1rem 2rem; }
+  .karte-knopf { top: .75rem; right: .75rem; width: 52px; height: 52px; }
+  .steuerkreuz .btn {
+    color: #fff;
+    background: rgba(0, 0, 0, .28);
+    backdrop-filter: blur(2px);
+    text-shadow: 0 1px 3px rgba(0, 0, 0, .6);
+  }
+  .steuerkreuz .btn:hover,
+  .steuerkreuz .btn:active {
+    border: 2px solid rgba(255, 255, 255, .85);
+    color: #fff;
+    background: rgba(0, 0, 0, .48);
+    border-color: #fff;
+  }
+}

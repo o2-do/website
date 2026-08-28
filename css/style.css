@@ -88,6 +88,9 @@ button.nav:hover { background: #364049; }
 button.nav:active { transform: translateY(1px); }
 button.nav.ghost { min-width: 0; background: transparent; color: var(--muted); }
 button.nav.full { border-color: #8a4b3c; color: #e0a99b; }
+/* Der EDIT-Modus faerbt seinen Knopf in der Farbe der Plaketten - solange er
+   leuchtet, setzt jeder Klick ins Bild eine Marke. */
+button.nav.aktiv { background: #eecc00; border-color: #eecc00; color: #232323; }
 
 .queue { color: var(--muted); font-size: 13px; }
 .queue b { color: var(--text); }

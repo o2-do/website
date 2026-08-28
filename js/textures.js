@@ -24,6 +24,7 @@ export async function loadTextures(renderer) {
     zypresse: 'img/zypresse.jpg',
     wellen: 'water/waternormals.jpg',   // Normalkarte der Wasseroberflaeche
     granit: 'img/granit.jpg',           // Treppenstufen, 1 m je Kachel
+    plakette: 'img/plakette.jpg',       // Vorderseite der Sammelmarken
   };
   const maxAniso = renderer.capabilities.getMaxAnisotropy();
   const loader = new THREE.TextureLoader();

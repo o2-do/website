@@ -236,22 +236,29 @@ export async function baueBestand(cfg, liste, plaene, trunks, bodenkarte, sektor
         // laeuft, muessen Baum fuer Baum gemessen werden - und selbst die nur,
         // solange sich etwas aendern kann.
         const dm = Math.hypot(p.x - s.mx, p.z - s.mz);
-        if (dm + s.rr < ab - band) { if (s.alleNah) continue; }
-        else if (dm - s.rr > ab) { if (s.alleFern) continue; }
-        let anders = false;
-        let nah = 0;
-        s.baeume.forEach((b, i) => {
-          const d = Math.hypot(p.x - b.x, p.y - b.y, p.z - b.z);
-          const fern = b.fern ? d > ab - band : d > ab;
-          if (!fern) nah++;
-          if (fern === b.fern) return;
-          b.fern = fern;
-          anders = true;
-          s.wald.setze(i, fern ? NIRGENDS : s.matrizen[i]);
-          if (s.tafeln) s.tafeln.setMatrixAt(i, fern ? _tafel(s.plan, b) : NIRGENDS);
-        });
-        s.alleNah = nah === s.baeume.length;
-        s.alleFern = nah === 0;
+        const ruhig = (dm + s.rr < ab - band && s.alleNah)
+                   || (dm - s.rr > ab && s.alleFern);
+        if (!ruhig) {
+          let anders = false;
+          let nah = 0;
+          s.baeume.forEach((b, i) => {
+            const d = Math.hypot(p.x - b.x, p.y - b.y, p.z - b.z);
+            const fern = b.fern ? d > ab - band : d > ab;
+            if (!fern) nah++;
+            if (fern === b.fern) return;
+            b.fern = fern;
+            anders = true;
+            s.wald.setze(i, fern ? NIRGENDS : s.matrizen[i]);
+            if (s.tafeln) s.tafeln.setMatrixAt(i, fern ? _tafel(s.plan, b) : NIRGENDS);
+          });
+          s.alleNah = nah === s.baeume.length;
+          s.alleFern = nah === 0;
+          if (anders) {
+            s.wald.fertig();
+            if (s.tafeln) s.tafeln.fertig();
+          }
+        }
+
         // GANZ AUS STATT AUF NULL GESCHRUMPFT. Eine Instanz mit Groesse null
         // erzeugt keinen Bildpunkt - der Scheitelpunkt-Shader laeuft aber
         // trotzdem ueber sie. Ein Sektor, in dem alle Baeume fern sind, hat
@@ -259,12 +266,17 @@ export async function baueBestand(cfg, liste, plaene, trunks, bodenkarte, sektor
         // Nebenbei behebt das eine Merkwuerdigkeit der Huellkugel: ueber lauter
         // Nullmatrizen gerechnet, schrumpft sie auf den Ursprung des Gartens -
         // und das Netz gilt als sichtbar, sobald man zur Gartenmitte schaut.
+        //
+        // GESETZT WIRD IMMER, AUCH WENN NICHTS GEMESSEN WURDE. Zwei Zuweisungen
+        // kosten nichts, und sie duerfen nicht veralten: greift jemand von
+        // aussen in die Sichtbarkeit - der Shader-Vorlauf schaltet zum
+        // Uebersetzen die ganze Szene an und danach wieder aus (siehe
+        // `waermeShader` in `scene.js`) -, dann stand hier ein Sektor auf
+        // „alles fern" und wurde uebersprungen, waehrend seine Tafeln
+        // ausgeschaltet blieben. Die fernen Baeume fehlten und kamen erst
+        // zurueck, wenn man ihnen nahe genug kam.
         s.wald.visible = !s.alleFern;
         if (s.tafeln) s.tafeln.visible = !s.alleNah;
-        if (anders) {
-          s.wald.fertig();
-          if (s.tafeln) s.tafeln.fertig();
-        }
       }
     },
 

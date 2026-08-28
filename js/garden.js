@@ -16,6 +16,7 @@ import { planTrunks } from './trees.js';
 import { ladeBauplaene, baueBestand } from './baumbestand.js';
 import { createBodenkarte } from './bodenkarte.js';
 import { stempleNetzschatten } from './schattenriss.js';
+import { bauePlaketten } from './plaketten.js';
 import {
   loadPlantModel, loadBed, pflanzenAusBeeten, planBeds, buildPlantMeshes,
   buildBedFloors, stempelPflanzenschatten,
@@ -343,7 +344,13 @@ export async function buildGarden(cfg, tex, onProgress = () => {}) {
   const placements = planRocks(hf, cfg, geos, pathIndex, occ);
   const rockMeshes = buildRockMeshes(geos, placements, felsMat, sektoren);
   for (const m of rockMeshes) group.add(m);
-  for (const pl of placements) sperre(pl.x, pl.z, pl.radXZ);
+  // NUR DER KOERPER, KEIN KAMERAABSTAND. Ein Felsblock liegt fast immer
+  // unter Augenhoehe; die Near-Plane schneidet ihn also kaum je an. Wichtiger
+  // ist, dass man zwischen zwei Brocken durchkommt, wo sichtbar Platz ist -
+  // mit dem weiten Abstand wuchsen zwei Findlinge in anderthalb Metern
+  // Entfernung zu einer Mauer zusammen. Am steilen Hang kann dafuer einmal
+  // eine Kante angeschnitten werden; das ist der bessere Handel.
+  for (const pl of placements) hindernisse.block(pl.x, pl.z, pl.radXZ + R_GEHER);
   stempelFelsschatten(bodenkarte, placements, geos, hf);
   stats.felsen = placements.length;
   phase('felsen');
@@ -513,6 +520,13 @@ export async function buildGarden(cfg, tex, onProgress = () => {}) {
       }
     }
   }
+  // DIE SAMMELPLAKETTEN. Sie sind keine gewuerfelte Ausstattung, sondern von
+  // Hand gesetzte Daten - sie stehen deshalb nicht im Formular, sondern kommen
+  // als Liste herein (siehe `plaketten.js`). Ein Netz fuer alle.
+  const plaketten = bauePlaketten(cfg._plaketten || [], tex.plakette);
+  if (plaketten) group.add(plaketten);
+  stats.plaketten = plaketten ? plaketten.count : 0;
+
   stats.hindernisse = Math.round((hindernisse.blockedCells / hindernisse.cells) * 100);
 
   stats.rasterBelegt = Math.round((occ.blockedCells / occ.cells) * 100);
@@ -533,7 +547,7 @@ export async function buildGarden(cfg, tex, onProgress = () => {}) {
   stats.sektoren = sektoren.an ? `${sektoren.n}² à ${sektoren.weite.toFixed(0)} m` : 'aus';
 
   return {
-    group, hf, paths, pathIndex, trunks, occ, bestand, bodenkarte, sektoren,
+    group, hf, paths, pathIndex, trunks, occ, bestand, bodenkarte, sektoren, plaketten,
     grasNetze, tor, wasser, teich, hindernisse,
     signs: signMeshes.faces, signPlan: signs, stats,
   };
