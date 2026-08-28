@@ -97,8 +97,12 @@ function starteIntro(cfg, built) {
 }
 
 /**
- * „Jemand wollte den Garten verlassen." Platzhalter - hier haengt spaeter das
- * Spiel dran; der Walker meldet nur (siehe `walker.js`).
+ * „Jemand wollte den Garten verlassen."
+ *
+ * Der Walker meldet nur, dass jemand gegen die Schranke gelaufen ist (siehe
+ * `walker.js`); was das bedeutet, steht hier. Solange die Sammlung nicht voll
+ * ist, ist es nichts - der Zaun schiebt zurueck. Ist sie voll, hat das Tor
+ * ohnehin eine Luecke, und der Durchgang wird in `pruefeDurchgang` bemerkt.
  */
 function exitGarden(detail) {   // eslint-disable-line no-unused-vars
 }
@@ -171,6 +175,9 @@ async function rebuild() {
     walkerMark.scale.setScalar(cfg.durchmesser * 0.05);
 
     schattenAnwenden(cfg);
+    // Das Tor steht erst jetzt fest - und mit ihm, wo der Ausgang liegt.
+    planeTorPass();
+    pruefeAusgang();
     starteIntro(cfg, built);
     viewer.birdFit(R);
     // Noch im Spinner alle Shader uebersetzen - sonst haelt jedes erstmals
@@ -226,6 +233,8 @@ function zeigeKartenknopf(bird) {
     bild.alt = bird ? 'Augenhöhe' : 'Karte';
   }
   knopf.title = bird ? 'Zurück in die Augenhöhe' : 'In die Vogelperspektive';
+  // Der Zoomregler gehoert zur Karte und verschwindet mit ihr.
+  zeigeZoomRegler(bird);
 }
 
 bind('btn-karte', () => {
@@ -273,6 +282,112 @@ window.addEventListener('keydown', (e) => {
   else if (was === 'zurueck') walker.enqueue('back');
   else walker.enqueueTurn(was === 'links' ? +1 : -1);
 });
+
+/* ---------------- Zoomregler der Karte (Telefon) ---------------- */
+
+/**
+ * EIN SENKRECHTER REGLER FUER DEN KARTENZOOM.
+ *
+ * Auf dem grossen Bildschirm dreht das Mausrad; auf dem Telefon gibt es keins,
+ * und zwei Finger auf der Buehne sind bereits mit dem Drehen belegt. Deshalb
+ * ein Regler am rechten Rand - sichtbar nur dort, wo er gebraucht wird: das
+ * Stylesheet blendet ihn ausserhalb der Telefonbreite aus, und `an` setzt ihn
+ * nur in der Vogelperspektive.
+ *
+ * GEZOGEN, NICHT GETIPPT. Der Zeiger wird beim Aufsetzen eingefangen
+ * (`setPointerCapture`); von da an folgt der Wert dem Finger, auch wenn er den
+ * schmalen Streifen verlaesst. Ein blosses Antippen setzt den Wert trotzdem -
+ * es ist derselbe Weg, nur ohne Bewegung dazwischen.
+ *
+ * DIE SKALA IST GEOMETRISCH, nicht linear: von 0,5 auf 6 ist ein Faktor 12,
+ * und linear verteilt laege die Haelfte des Weges schon bei Zoom 3,25. Mit
+ * `min * (max/min)^t` fuehlt sich jeder Zentimeter Weg gleich viel an - so,
+ * wie es das Mausrad tut, das ebenfalls in Faktoren rechnet.
+ */
+const zoomRegler = document.getElementById('zoom-regler');
+const zoomSchiene = zoomRegler && zoomRegler.querySelector('.zoom-schiene');
+const zoomKnopf = zoomRegler && zoomRegler.querySelector('.zoom-knopf');
+// Ob der Finger gerade auf dem Griff liegt. Solange er das tut, fuehrt die
+// Bildschleife den Griff NICHT nach - sie ueberschriebe die Bewegung.
+let zoomZieht = false;
+
+const klemm = (t) => Math.min(1, Math.max(0, t));
+
+function zoomAusStellung(t) {
+  const { min, max } = viewer.kartenZoomGrenzen;
+  return min * Math.pow(max / min, klemm(t));
+}
+
+function stellungAusZoom(z) {
+  const { min, max } = viewer.kartenZoomGrenzen;
+  return klemm(Math.log(z / min) / Math.log(max / min));
+}
+
+// Zuletzt gezeichnete Stellung - der Griff wird je Bild nachgefuehrt, aber nur
+// angefasst, wenn sich wirklich etwas geaendert hat.
+let zoomStand = -1;
+
+function zeichneZoomStellung(t) {
+  if (!zoomKnopf) return;
+  const g = klemm(t);
+  if (Math.abs(g - zoomStand) < 0.002) return;
+  zoomStand = g;
+  zoomKnopf.style.top = `${(1 - g) * 100}%`;
+  zoomRegler.setAttribute('aria-valuenow', String(Math.round(g * 100)));
+}
+
+/** Den Regler zeigen oder verstecken. Sichtbar wird er erst im Stylesheet. */
+function zeigeZoomRegler(an) {
+  if (!zoomRegler) return;
+  zoomRegler.classList.toggle('an', !!an);
+  if (an) zeichneZoomStellung(stellungAusZoom(viewer.kartenZoom));
+}
+
+if (zoomRegler && zoomSchiene) {
+  const ausZeiger = (e) => {
+    const r = zoomSchiene.getBoundingClientRect();
+    if (!r.height) return;
+    const t = 1 - (e.clientY - r.top) / r.height;
+    viewer.setKartenZoom(zoomAusStellung(t));
+    zeichneZoomStellung(t);
+  };
+
+  zoomRegler.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    zoomZieht = true;
+    zoomRegler.classList.add('zieht');
+    try { zoomRegler.setPointerCapture(e.pointerId); } catch { /* egal */ }
+    ausZeiger(e);
+  });
+
+  zoomRegler.addEventListener('pointermove', (e) => {
+    if (!zoomZieht) return;
+    e.preventDefault();
+    ausZeiger(e);
+  });
+
+  const zoomEnde = (e) => {
+    if (!zoomZieht) return;
+    zoomZieht = false;
+    zoomRegler.classList.remove('zieht');
+    if (e.pointerId !== undefined && zoomRegler.hasPointerCapture(e.pointerId)) {
+      zoomRegler.releasePointerCapture(e.pointerId);
+    }
+  };
+  zoomRegler.addEventListener('pointerup', zoomEnde);
+  zoomRegler.addEventListener('pointercancel', zoomEnde);
+  zoomRegler.addEventListener('lostpointercapture', zoomEnde);
+  // Der Regler liegt ueber der Buehne; ohne das hier zaehlte sein Loslassen
+  // zugleich als Klick auf die Karte und versetzte den Standort.
+  zoomRegler.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); });
+  // Und das Rad soll auch auf ihm noch zoomen, nicht die Seite rollen.
+  zoomRegler.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    viewer.zoom(Math.sign(e.deltaY) * 3);
+    zeichneZoomStellung(stellungAusZoom(viewer.kartenZoom));
+  }, { passive: false });
+}
 
 /* ---------------- Umschauen und Hingehen ---------------- */
 
@@ -469,12 +584,101 @@ document.addEventListener('click', (e) => {
 });
 
 /**
- * ALLE GEFUNDEN. Der Haken fuer das Spielende; er laedt `gameover.html` in
- * denselben Container wie die Plakettenseiten.
+ * DAS SPIEL IST AUS. Der Haken fuer das Spielende: er stellt den Pokal auf die
+ * Buehne und laedt `gameover.html` in denselben Container wie die
+ * Plakettenseiten.
+ *
+ * Gerufen wird er nicht mehr beim Einsammeln der letzten Marke, sondern erst,
+ * wenn der Garten durch den freigeschalteten Ausgang verlassen wurde.
  */
 window.gameOver = async function gameOver() {
+  zeigePokal(true);
   await ladeSeite('gameover.html');
 };
+
+/* ---------------- Der Ausgang ---------------- */
+
+/**
+ * DER AUSGANG IST ZU, BIS DIE LETZTE PLAKETTE EINGESAMMELT IST.
+ *
+ * Bis dahin haelt die Schranke rundum (siehe `setzeGrenze` in walker.js), und
+ * wer gegen sie laeuft, wird am Zaun entlanggeschoben. Ist die Sammlung voll,
+ * bekommt die Schranke eine Luecke - genau die Toroeffnung -, und erst wenn
+ * jemand wirklich HINDURCH ist, endet das Spiel.
+ *
+ * Gerechnet wird in zwei Achsen der Toroeffnung: `laengs` verlaeuft in der
+ * Zaunluecke von Pfosten zu Pfosten, `hinaus` steht senkrecht darauf und zeigt
+ * aus dem Garten heraus. Damit ist der Durchlass ein Rechteck, kein Kreis -
+ * ein Kreis um die Tormitte waere entweder zu schmal fuer die Oeffnung oder
+ * zu weit fuer den Zaun daneben.
+ */
+const TOR_RAND = 0.5;        // Abstand zu den Torpfosten, in m
+const TOR_TIEFE = 8.0;       // so weit reicht der Durchlass nach draussen
+const DRAUSSEN_M = 2.0;      // ab hier gilt der Garten als verlassen
+
+let ausgangFrei = false;
+let gewonnen = false;
+let torPass = null;
+
+/** Die beiden Achsen der Toroeffnung aus dem gebauten Tor herleiten. */
+function planeTorPass() {
+  torPass = null;
+  const t = garden && garden.tor;
+  if (!t) return;
+  const dx = t.b.x - t.a.x, dz = t.b.z - t.a.z;
+  const l = Math.hypot(dx, dz);
+  const r = Math.hypot(t.mitte.x, t.mitte.z);
+  if (l < 1e-6 || r < 1e-6) return;
+  torPass = {
+    mx: t.mitte.x, mz: t.mitte.z,
+    ux: dx / l, uz: dz / l,                    // laengs der Zaunluecke
+    nx: t.mitte.x / r, nz: t.mitte.z / r,      // nach draussen
+    halb: Math.max(0.4, l / 2 - TOR_RAND),
+  };
+}
+
+/** Wie weit die Stelle (x, z) vor dem Tor liegt - negativ heisst: drinnen. */
+function hinausWeite(x, z) {
+  if (!torPass) return -Infinity;
+  return (x - torPass.mx) * torPass.nx + (z - torPass.mz) * torPass.nz;
+}
+
+/** Liegt (x, z) in der Toroeffnung? Nur dort gilt die Schranke nicht. */
+function imTor(x, z) {
+  if (!torPass) return false;
+  const laengs = (x - torPass.mx) * torPass.ux + (z - torPass.mz) * torPass.uz;
+  if (Math.abs(laengs) > torPass.halb) return false;
+  const hinaus = hinausWeite(x, z);
+  return hinaus > -1.5 && hinaus < TOR_TIEFE;
+}
+
+/**
+ * Den Ausgang nach dem Stand der Sammlung auf- oder zuschliessen. Wird nach
+ * jedem Einsammeln, nach jedem Aufbau und nach jedem geladenen Spielstand
+ * gerufen - er liest nur ab, was ohnehin dasteht.
+ */
+function pruefeAusgang() {
+  ausgangFrei = plaketten.length > 0 && plaketten.every((q) => q.weg);
+  walker.setzeDurchlass(ausgangFrei && torPass ? imTor : null);
+}
+
+/** Der Pokal auf der Buehne. */
+function zeigePokal(an) {
+  const p = document.getElementById('pokal');
+  if (p) p.hidden = !an;
+}
+
+/**
+ * DURCH DEN AUSGANG GEGANGEN. Je Bild gefragt, aber nur einmal beantwortet:
+ * `gewonnen` macht daraus eine Flanke.
+ */
+function pruefeDurchgang() {
+  if (!ausgangFrei || gewonnen || !torPass || intro) return;
+  const p = walker.pose;
+  if (hinausWeite(p.x, p.z) < DRAUSSEN_M) return;
+  gewonnen = true;
+  window.gameOver();
+}
 
 /* ---------------- Spielstand ---------------- */
 
@@ -514,6 +718,11 @@ window.setSpielstand = function setSpielstand() {
   walker.reset(stand.x, stand.z, stand.yaw);
   zeigeGreifbar(-1);
   zeigeGesammelt();
+  // Ein geladener Stand bestimmt auch, ob der Ausgang offen ist - und wer
+  // wieder mittendrin steht, hat den Pokal noch nicht.
+  gewonnen = false;
+  zeigePokal(false);
+  pruefeAusgang();
   melde(`geladen · ${(stand.gesammelt || []).length} Plaketten`);
   return stand;
 };
@@ -537,9 +746,10 @@ async function sammlePlakette() {
   if (pl && typeof window.addPlakette === 'function') window.addPlakette(pl.nr);
   zeigeGesammelt();
   if (pl) await ladeSeite(`plakette-${pl.nr}.html`);
-  // Die letzte Marke beendet das Spiel; ihre Seite bleibt ueber die Sammlung
-  // in der Seitenspalte erreichbar.
-  if (plaketten.length && plaketten.every((q) => q.weg)) window.gameOver();
+  // Die letzte Marke beendet das Spiel NICHT - sie schliesst den Ausgang auf.
+  // Zu sehen ist zunaechst ihre eigene Seite wie bei jeder anderen; das Ende
+  // kommt erst, wenn jemand durch das Tor hinausgeht (`pruefeDurchgang`).
+  pruefeAusgang();
 }
 
 plakettenKnopf.addEventListener('click', (e) => { e.preventDefault(); sammlePlakette(); });
@@ -587,6 +797,12 @@ viewer.onFrame((dt) => {
     garden ? garden.hf.heightAt(pose.x, pose.z) : 0,
     viewer.isBird(),
   );
+  pruefeDurchgang();
+  // Der Zoomregler zeigt den Stand an, den auch das Mausrad aendern kann -
+  // solange niemand ihn selbst haelt.
+  if (zoomRegler && zoomRegler.classList.contains('an') && !zoomZieht) {
+    zeichneZoomStellung(stellungAusZoom(viewer.kartenZoom));
+  }
 });
 
 /* ---------------- Start ---------------- */

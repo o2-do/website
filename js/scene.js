@@ -188,6 +188,10 @@ export function createViewer(canvas) {
   const BAUM_HOCH = 20;                    // Baumhoehe in m, fuer den Ausschnitt
   const birdCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 1000);
   const bird = { az: 0, radius: 50, zoom: 1 };
+  // Die Grenzen des Kartenzooms stehen hier und nicht im Rechenausdruck: der
+  // Regler auf dem Telefon braucht dieselben Werte, um seinen Weg darauf
+  // abzubilden (siehe `setKartenZoom`).
+  const BIRD_ZOOM_MIN = 0.5, BIRD_ZOOM_MAX = 6;
   let seiten = 1;                          // Seitenverhaeltnis des Canvas
 
   let active = walkCam;
@@ -340,7 +344,7 @@ export function createViewer(canvas) {
     zoom(delta) {
       const f = delta > 0 ? 0.9 : 1 / 0.9;
       if (active === birdCam) {
-        bird.zoom = Math.min(6, Math.max(0.5, bird.zoom * f));
+        bird.zoom = Math.min(BIRD_ZOOM_MAX, Math.max(BIRD_ZOOM_MIN, bird.zoom * f));
         birdUpdate();
         return bird.zoom;
       }
@@ -362,6 +366,21 @@ export function createViewer(canvas) {
     /** Neigung der Karte in Grad und ihr Zoomfaktor - fuer die Anzeige. */
     get kartenNeigung() { return BIRD_EL * 180 / Math.PI; },
     get kartenZoom() { return bird.zoom; },
+    /** Die Enden des Kartenzooms - der Regler braucht sie fuer seine Skala. */
+    get kartenZoomGrenzen() { return { min: BIRD_ZOOM_MIN, max: BIRD_ZOOM_MAX }; },
+
+    /**
+     * Den Kartenzoom unmittelbar setzen, statt ihn wie am Mausrad um eine
+     * Raste zu verschieben. Das braucht der Schieberegler auf dem Telefon: er
+     * zeigt eine Stellung an, und eine Stellung ist ein Wert, kein Schritt.
+     */
+    setKartenZoom(z) {
+      const w = Math.min(BIRD_ZOOM_MAX, Math.max(BIRD_ZOOM_MIN, +z || BIRD_ZOOM_MIN));
+      if (w === bird.zoom) return bird.zoom;
+      bird.zoom = w;
+      birdUpdate();
+      return bird.zoom;
+    },
 
     // Schattenkamera auf die Gartengroesse spannen (2048er Map / 2.3R Kantenlaenge)
     fitShadow(radius) {

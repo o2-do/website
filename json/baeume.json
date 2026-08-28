@@ -13,7 +13,11 @@
   "baeume": [
     {
       "name": "große Eiche",
-      "baum": "eiche_gross.json"
+      "baum": "eiche.json"
+    },
+    {
+      "name": "kleine Eiche",
+      "baum": "eiche.json"
     }
   ]
 }

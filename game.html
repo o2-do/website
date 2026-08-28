@@ -53,6 +53,27 @@
         <span id="plakette-nr" class="plakette-nr"></span>
       </button>
 
+      <!-- Der Zoomregler der Karte. Er steht nur auf dem Telefon und nur in
+           der Vogelperspektive: dort fehlt das Mausrad, und zwei Finger
+           aufzulegen ist auf der Buehne bereits das Drehen. Unten der
+           weiteste Blick, oben der naechste. -->
+      <div id="zoom-regler" class="zoom-regler" role="slider"
+           aria-label="Kartenzoom" aria-orientation="vertical"
+           aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+        <span class="zoom-marke zoom-mehr" aria-hidden="true">+</span>
+        <div class="zoom-schiene">
+          <div class="zoom-knopf"></div>
+        </div>
+        <span class="zoom-marke zoom-weniger" aria-hidden="true">−</span>
+      </div>
+
+      <!-- Der Pokal. Er liegt still ueber der Buehne, bis der Garten durch den
+           Ausgang verlassen wurde. Der Halter darum ist genau die Buehne - er
+           macht das Mittig-Stellen zu einer Sache des Layouts. -->
+      <div id="pokal" class="pokal-halter" hidden>
+        <img class="pokal" src="./img/pokal.png" alt="Pokal">
+      </div>
+
       <div id="spinner" class="spinner-overlay">
         <div class="spinner-border text-secondary" role="status"></div>
         <div id="spinner-text" class="text-secondary small">Garten wird gebaut …</div>
@@ -65,11 +86,12 @@
       <h1 class="h1">Schnitzeljagd</h1>
       <p class="lead">10 Plaketten werden gesucht</p>
       <p>
-        Im ausgewählten Garten auf der Startseite wartet eine Schnitzeljagd: 10 versteckte Plaketten gilt es einzusammeln.
-        Jede Plakette enthält einen Hinweis, wo sich die nächste versteckt.<br>
-        Das Spiel ist gewonnen, wenn alle 10 Plaketten eingesammelt sind.
+        In diesem Garten sind 10 Plaketten versteckt.
+        Jede Plakette enthält einen Hinweis darauf, wo du die nächste findest.
+        Du gewinnst das Spiel, wenn du den Garten mit allen 10 Plaketten verlässt.
       </p>
       <p>
+        So sammelst du sie ein:<br>
         Bist du nah genug an einer Plakette, erscheint das Plaketten-Symbol unten links in der Szene.<br>
         Klick darauf oder drücke die Leertaste zum Einsammeln.<br>
         Unterhalb der Szene erscheint dann ein Hinweis auf die nächste Plakette.

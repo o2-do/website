@@ -71,6 +71,10 @@ export function createWalker(camera, getHeight) {
   let dragging = false, retT = RETURN, pitchFrom = 0;
   // Halbmesser, ueber den hinaus nicht gelaufen wird. 0 heisst: keine Grenze.
   let grenze = 0;
+  // EINE LUECKE IN DER SCHRANKE. `durchlass(x, z)` sagt, ob an dieser Stelle
+  // trotz der Grenze weitergegangen werden darf - das Tor, sobald das Spiel es
+  // freigibt. Fehlt sie, schliesst der Kreis rundum wie bisher.
+  let durchlass = null;
   // `hindernis(x, z)` sagt, ob dort etwas im Weg steht. Fehlt sie, laeuft es
   // wie bisher - der Konfigurator kann sie also nachreichen, wenn der Garten
   // fertig ist, und nichts haengt in der Zwischenzeit.
@@ -231,7 +235,8 @@ export function createWalker(camera, getHeight) {
   function schiebe(dx, dz) {
     const r = Math.hypot(pose.x, pose.z);
     const nx1 = pose.x + dx, nz1 = pose.z + dz;
-    if (grenze <= 0 || Math.hypot(nx1, nz1) <= grenze) {
+    if (grenze <= 0 || Math.hypot(nx1, nz1) <= grenze
+        || (durchlass && durchlass(nx1, nz1))) {
       const [ex, ez] = ausweichen(dx, dz);
       pose.x += ex; pose.z += ez;
       angestossen = false;
@@ -258,8 +263,13 @@ export function createWalker(camera, getHeight) {
     pose.z += ez;
     // Der Schritt laengs des Zauns fuehrt auf der Sehne minimal nach aussen;
     // deshalb zum Schluss noch einmal auf den Kreis zurueckziehen.
+    //
+    // ABER NUR, WER DRINNEN WAR. Wer durch das geoeffnete Tor hinausgegangen
+    // ist, steht rechtmaessig ausserhalb des Kreises; ihn zurueckzuziehen
+    // riefe ihn bei jedem Schritt, der neben der Toroeffnung liegt, an den
+    // Zaun zurueck.
     const r2 = Math.hypot(pose.x, pose.z);
-    if (r2 > grenze) { pose.x *= grenze / r2; pose.z *= grenze / r2; }
+    if (r2 > grenze && r <= grenze) { pose.x *= grenze / r2; pose.z *= grenze / r2; }
   }
 
   // Ein Teilschritt der laufenden Aktion. `du` ist der Fortschrittsanteil.
@@ -344,6 +354,12 @@ export function createWalker(camera, getHeight) {
      * die ja von draussen kommt.
      */
     setzeGrenze(radius) { grenze = Math.max(0, radius || 0); angestossen = false; },
+    /**
+     * Die Luecke in der Schranke setzen (oder mit `null` schliessen). Was
+     * darin liegt, ist Sache des Spiels - hier zaehlt nur, dass die Grenze
+     * dort nicht gilt.
+     */
+    setzeDurchlass(fn) { durchlass = typeof fn === 'function' ? fn : null; },
     /** Die Abfrage auf feste Hindernisse setzen (oder mit `null` abschalten). */
     setzeHindernis(fn) { hindernis = typeof fn === 'function' ? fn : null; },
     get grenze() { return grenze; },

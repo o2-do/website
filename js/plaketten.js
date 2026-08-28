@@ -165,13 +165,38 @@ export function setzePlakettenStand(netz, gesammelt) {
   return offen;
 }
 
+// Wie weit die Reichweite in die Hoehe geht. GETRENNT VON DER WEITE, und das
+// ist der Kern der Sache: eine Marke in den Zweigen sitzt zwei, drei Meter
+// ueber dem Boden. Wuerde die Hoehe wie bisher in EINEN Abstand eingerechnet,
+// waere sie schon allein durch ihre Hoehe ausser Reichweite - man stuende
+// unmittelbar darunter und kaeme trotzdem nicht heran, weil der Weg nach oben
+// die zweieinhalb Meter bereits aufgebraucht hat. Und naeher heran geht es
+// nicht: unter dem Baum steht der Stamm, das Hindernisraster haelt einen einen
+// knappen Meter davon entfernt.
+//
+// Nach oben grosszuegiger als nach unten - Verstecke liegen in Zweigen, nicht
+// in Loechern.
+const REICH_HOCH = 4.0;
+const REICH_TIEF = 2.5;
+// Innerhalb dieses Halbmessers gilt kein Blickkegel mehr. Wer fast senkrecht
+// unter einer Marke steht, hat keine sinnvolle Richtung zu ihr: ein halber
+// Schritt zur Seite drehte die waagerechte Richtung um neunzig Grad, und die
+// Marke ginge an und aus, ohne dass sich der Blick geaendert haette.
+const REICH_NAH = 1.2;
+
 /**
  * WELCHE PLAKETTE IST IN REICHWEITE?
  *
- * In Reichweite heisst: naeher als `reichweite` (2,5 m), und im Blickfeld. Waagerecht
- * gilt ein Kegel von `grad` zu jeder Seite, senkrecht gar keine Schranke - wer
- * eine Marke vor den Fuessen hat, soll sie auch dann greifen koennen, wenn er
- * geradeaus schaut.
+ * In Reichweite heisst: waagerecht naeher als `reichweite` (2,5 m), senkrecht
+ * innerhalb von `REICH_HOCH` darueber und `REICH_TIEF` darunter, und im
+ * Blickfeld. Waagerecht gilt ein Kegel von `grad` zu jeder Seite, senkrecht
+ * gar keine Schranke - wer eine Marke vor den Fuessen oder ueber dem Kopf hat,
+ * soll sie auch dann greifen koennen, wenn er geradeaus schaut.
+ *
+ * WEITE UND HOEHE WERDEN GETRENNT GEMESSEN, nicht zu einem Abstand verrechnet
+ * (siehe `REICH_HOCH`). Ausgewaehlt wird danach die naechste im Raum - stehen
+ * eine im Gras und eine im Baum zugleich bereit, gilt die, vor der man
+ * wirklich steht.
  *
  * GEMESSEN WIRD VOM STANDPUNKT, NICHT VOM AUGE. Das Auge sitzt anderthalb Meter
  * ueber dem Boden; eine Marke, die einen Meter vor den Fuessen im Gras liegt,
@@ -188,20 +213,27 @@ export function plaketteInReichweite(liste, kamera, fussY, reichweite = 2.5, gra
   const p = kamera.getWorldPosition(_p);
   const y = Number.isFinite(fussY) ? fussY : p.y;
   kamera.getWorldDirection(_n);
-  const bl = Math.hypot(_n.x, _n.z) || 1;
-  const bx = _n.x / bl, bz = _n.z / bl;
+  // Schaut jemand fast senkrecht nach oben oder unten, bleibt von der
+  // Blickrichtung waagerecht nichts uebrig, was eine Richtung waere. Dann
+  // entscheidet allein der Abstand.
+  const bl = Math.hypot(_n.x, _n.z);
+  const kegel = bl > 0.05;
+  const bx = kegel ? _n.x / bl : 0, bz = kegel ? _n.z / bl : 0;
   const grenze = Math.cos((grad * Math.PI) / 180);
   let best = -1, bestD = Infinity;
   for (let i = 0; i < liste.length; i++) {
     const pl = liste[i];
     if (pl.weg) continue;
     const dx = pl.x - p.x, dy = pl.y - y, dz = pl.z - p.z;
-    const d = Math.hypot(dx, dy, dz);
-    if (d > reichweite || d >= bestD) continue;
+    if (dy > REICH_HOCH || dy < -REICH_TIEF) continue;
     const l = Math.hypot(dx, dz);
-    // Steht man genau darueber, gibt es keine waagerechte Richtung mehr - dann
-    // ist sie in Reichweite, gleich wohin man schaut.
-    if (l > 1e-4 && (dx / l) * bx + (dz / l) * bz < grenze) continue;
+    if (l > reichweite) continue;
+    const d = Math.hypot(l, dy);
+    if (d >= bestD) continue;
+    // Steht man so gut wie darueber oder darunter, gibt es keine brauchbare
+    // waagerechte Richtung mehr - dann ist sie in Reichweite, gleich wohin
+    // man schaut.
+    if (kegel && l > REICH_NAH && (dx / l) * bx + (dz / l) * bz < grenze) continue;
     best = i; bestD = d;
   }
   return best;

@@ -4,6 +4,11 @@ body, .btn {
 .szene { /* packt Buehe und Steuerung zusammen, in Mobile überschnitten */
   position: relative;
   padding-bottom: 100px;
+  /* WAS UNTER DER BUEHNE LIEGT: der Platz fuer das Steuerkreuz plus der
+     Abstand der Buehne selbst (`mb-3`). Die Buehne ist nicht positioniert -
+     alles, was ueber ihr liegt, misst sich an der Szene und muss diesen
+     Streifen deshalb abziehen, wenn es MITTIG AUF DER BUEHNE stehen soll. */
+  --unter-buehne: calc(100px + 1rem);
 }
 .buehne {
   aspect-ratio: 16 / 9;
@@ -29,7 +34,7 @@ body, .btn {
     Sie taucht nur auf, wenn wirklich eine greifbar ist - deshalb faellt sie
     auf, ohne dauernd im Bild zu stehen. */
 .plakette-knopf {
-  position: absolute; left: 1rem; bottom: 1rem;
+  position: absolute; left: 1rem; bottom: 128px;
   width: 64px; height: 41px; padding: 0;
   border-radius: .5rem; overflow: hidden;
   border: 2px solid #eecc00;
@@ -40,13 +45,13 @@ body, .btn {
 }
 .plakette-knopf img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .plakette-nr {
-  position: absolute; right: 2px; bottom: 1px;
-  font-size: .7rem; line-height: 1; color: #232323;
-  background: rgba(238,204,0,.85); border-radius: .25rem; padding: 0 .2rem;
+  position: absolute; right: 2px; bottom: 2px;
+  font-size: .65rem; line-height: 1; color: #eecc00;
+  background: #000000; border-radius: .25rem; padding: 0 .2rem;
 }
 @keyframes plakette-auf { from { transform: scale(.6); opacity: 0; } }
 @media (max-width: 991.98px) {
-  .plakette-knopf { left: .75rem; bottom: .75rem; width: 52px; height: 52px; }
+  .plakette-knopf { left: .75rem; bottom: 2rem; width: 52px; height: 52px; }
 }
 
 /* Die Liste der gesammelten Plaketten in der Seitenspalte: je Marke ein
@@ -101,6 +106,114 @@ body, .btn {
 .steuerkreuz .zurueck{ grid-area: 2 / 2; }
 .steuerkreuz .rechts { grid-area: 2 / 3; }
 
+/* DER ZOOMREGLER DER KARTE.
+
+    Er steht am rechten Rand, von der Mitte bis nach unten - dort, wo der
+    Daumen der haltenden Hand ohnehin liegt, und weit genug vom Steuerkreuz
+    (unten mittig) und vom Kartenknopf (oben rechts) entfernt.
+
+    UNTEN IST WEIT, OBEN IST NAH. Das ist die Richtung, die ein Regler auf
+    einem Telefon meint: hochziehen heisst mehr.
+
+    Er ist auf dem grossen Bildschirm ausgeblendet - dort gibt es das Mausrad.
+    Sichtbar wird er allein durch `an`, und das setzt game.js, wenn die
+    Vogelperspektive an ist.
+
+    `touch-action: none` gilt NUR fuer ihn: der Finger auf dem Regler soll
+    zoomen und nicht die Seite schieben. Ueberall sonst bleibt das Wischen,
+    was es war - die Buehne laesst sich weiterhin nach oben schieben, um den
+    Text darunter zu lesen. */
+.zoom-regler {
+  display: none;
+  position: absolute;
+  right: .5rem;
+  top: 50%;
+  bottom: .75rem;
+  width: 46px;
+  z-index: 6;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: pointer;
+}
+.zoom-schiene {
+  position: absolute;
+  left: 50%;
+  top: 26px;
+  bottom: 26px;
+  width: 10px;
+  transform: translateX(-50%);
+  border-radius: 5px;
+  border: 1px solid rgba(255, 255, 255, .85);
+  background: rgba(0, 0, 0, .28);
+  backdrop-filter: blur(2px);
+}
+/* Der Griff sitzt auf seiner Stellung; game.js setzt nur `top` in Prozent,
+    die halbe Hoehe nimmt die Verschiebung heraus. */
+.zoom-knopf {
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  width: 34px;
+  height: 34px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  border: 2px solid #fff;
+  background: rgba(0, 0, 0, .45);
+  box-shadow: 0 .15rem .5rem rgba(0, 0, 0, .45);
+}
+.zoom-regler.zieht .zoom-knopf {
+  background: var(--bs-primary);
+  transform: translate(-50%, -50%) scale(1.15);
+}
+.zoom-marke {
+  position: absolute;
+  left: 0; right: 0;
+  height: 26px;
+  line-height: 26px;
+  text-align: center;
+  font-size: 1.25rem;
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, .8);
+  pointer-events: none;
+}
+.zoom-mehr { top: 0; }
+.zoom-weniger { bottom: 0; }
+
+/* DER POKAL. Mittig auf der Buehne, sobald der Garten durch den geoeffneten
+    Ausgang verlassen wurde. Er nimmt keine Klicks an - dahinter liegt die
+    Szene, und die soll bedienbar bleiben.
+
+    Der Halter deckt sich mit der Buehne (siehe `--unter-buehne`) und stellt
+    den Pokal per Flexbox in seine Mitte. Das ist mehr als Bequemlichkeit: nur
+    mit einem Rahmen bekannter Hoehe laesst sich die Groesse des Bildes in
+    Prozent angeben. */
+.pokal-halter {
+  position: absolute;
+  left: 0; right: 0;
+  top: 0; bottom: var(--unter-buehne, 0px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 6;
+  pointer-events: none;
+}
+.pokal-halter[hidden] { display: none; }
+.pokal {
+  height: 62%;
+  width: auto;
+  max-width: 80%;
+  /* Auf schmalen Bildschirmen greift die Breitengrenze vor der Hoehe. Ohne
+     `contain` zoege sie das Bild in die Laenge - so bleibt es im Verhaeltnis
+     und rueckt nur naeher zusammen. */
+  object-fit: contain;
+  filter: drop-shadow(0 .6rem 1.2rem rgba(0, 0, 0, .45));
+  animation: pokal-auf .7s ease-out;
+}
+@keyframes pokal-auf {
+  from { transform: scale(.3); opacity: 0; }
+}
+
 .spinner-overlay {
   position: absolute; inset: 0;
   display: flex; flex-direction: column;
@@ -147,4 +260,9 @@ body, .btn {
     background: rgba(0, 0, 0, .48);
     border-color: #fff;
   }
+  /* Erst hier bekommt der Zoomregler seinen Platz - und auch dann nur in der
+     Vogelperspektive (`an` setzt game.js). */
+  .zoom-regler.an { display: block; }
+  /* Randlos heisst auch: unter der Buehne liegt nichts mehr. */
+  .szene { --unter-buehne: 0px; }
 }
