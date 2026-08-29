@@ -3,9 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Der virtuelle Garten</title>
-
-  <!-- Bootstrap liegt lokal wie three.js: der Garten soll offline laufen. -->
+  <title>Der virtuelle Garten | Schnitzeljagd</title>
+  <meta name="garten" content="json/garten.json">
   <link rel="stylesheet" href="vendor/bootstrap.min.css">
   <link rel="stylesheet" href="css/game.css">
   <script type="importmap">
@@ -39,9 +38,9 @@
 
       <div class="steuerkreuz">
         <button id="btn-forward" type="button" class="btn vor"     title="1 m vorwärts">↑</button>
-        <button id="btn-left"    type="button" class="btn links"   title="30° nach links">←</button>
+        <button id="btn-left"    type="button" class="btn links"   title="15° nach links">←</button>
         <button id="btn-back"    type="button" class="btn zurueck" title="1 m rückwärts">↓</button>
-        <button id="btn-right"   type="button" class="btn rechts"  title="30° nach rechts">→</button>
+        <button id="btn-right"   type="button" class="btn rechts"  title="15° nach rechts">→</button>
       </div>
 
       <!-- Die gefundene Plakette: unten links im Bild, solange eine in
@@ -51,6 +50,15 @@
               title="Plakette einsammeln (Leertaste)">
         <img src="./img/plakette.jpg" alt="Plakette">
         <span id="plakette-nr" class="plakette-nr"></span>
+      </button>
+
+      <!-- Die Sprechblase zur allerersten greifbaren Plakette. Sie steht nur,
+           bis eine eingesammelt ist - danach weiss man, wie es geht, und ein
+           Hinweis, der bleibt, ist eine Ermahnung. Ein Klick darauf sammelt
+           ebenfalls ein: sie liegt neben dem Knopf, also soll sie tun, was er
+           tut, statt eine tote Flaeche zu sein. -->
+      <button id="plakette-hinweis" type="button" class="plakette-hinweis" hidden>
+        Klicke, um die Plakette zu sammeln
       </button>
 
       <!-- Der Zoomregler der Karte. Er steht nur auf dem Telefon und nur in
@@ -132,6 +140,15 @@
   </div>
 
 </main>
+
+<footer>
+  <p class="text-center text-secondary">
+    <a href="index.html">Start</a> | <a href="game.html">Schnitzeljagd</a> | <a href="programmierung.html">Hinweise zur Programmierung</a>
+  </p>
+  <p class="text-center text-secondary pt-2">
+    &copy; 2026 Dirk Ruetz, Kirschblütenweg 15, 70569 Stuttgart
+  </p>
+</footer>
 
 <script type="module" src="js/game.js"></script>
 </body>

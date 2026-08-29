@@ -30,6 +30,21 @@ import { stream } from './rng.js';
 // ausgefranste Pfuetze. Bei dreissig Zentimetern auf achtzig sind es
 // fuenfunddreissig Grad, und dieselbe Unebenheit verschiebt sie um sieben.
 const SPIEGEL_UNTER_GRUND = 0.30;
+/**
+ * DIE FARBE DES WASSERS IN DER KARTE.
+ *
+ * Ein ruhiges Graublau, flach aufgetragen. In der Vogelperspektive faellt der
+ * Spiegel aus: dort blickt eine orthografische Kamera auf den Garten, und die
+ * Spiegelkonstruktion braucht eine perspektivische (siehe `onBeforeRender`).
+ * Uebrig blieb bisher das ZULETZT gerechnete Spiegelbild - ein eingefrorenes
+ * Standbild aus der Augenhoehe, das quer ueber dem Teich lag und mit nichts in
+ * der Karte etwas zu tun hatte.
+ *
+ * Die Karte ist eine Zeichnung, kein Bild. Wasser ist darin eine Flaeche, so
+ * wie die Wiese eine ist.
+ */
+const KARTEN_FARBE = 0x8ea6b4;
+
 // Wassertiefe unter dem Spiegel. Sieht man kaum - die Flaeche ist nicht
 // durchsichtig -, aber der Boden soll nicht durchscheinen.
 const TIEFE = 0.25;
@@ -288,6 +303,13 @@ export function baueWasser(teich, cfg, normalKarte, qualitaet) {
   mesh.position.set(teich.x, teich.spiegel, teich.z);
   mesh.name = 'wasser';
   mesh.receiveShadow = false;
+  // Auch ohne Spiegel gilt in der Karte das Graublau - die beiden Stufen
+  // sollen dort nicht verschieden aussehen.
+  const gruen = material.color.clone();
+  const grau = new THREE.Color(KARTEN_FARBE);
+  mesh.onBeforeRender = (renderer, scene, camera) => {
+    material.color.copy(camera.isPerspectiveCamera ? gruen : grau);
+  };
   return mesh;
 }
 
@@ -354,6 +376,10 @@ function spiegelFlaeche(geo, teich, karte, cfg) {
       tNormal: { value: karte },
       texturMatrix: { value: texturMatrix },
       farbe: { value: new THREE.Color(0x6f9179) },
+      // 1, solange die Karte gezeichnet wird - dann tritt `kartenFarbe` an die
+      // Stelle von allem, was der Spiegel sonst beitraegt.
+      karte: { value: 0 },
+      kartenFarbe: { value: new THREE.Color(KARTEN_FARBE) },
       // WIE VIEL WASSERFARBE UEBERHAUPT MITSPIELT. Null heisst: reiner
       // Spiegel, so klar wie die Rechnung ihn hergibt. Eine Toenung macht das
       // Bild ruhiger, kostet aber genau die Klarheit, fuer die der zweite
@@ -377,6 +403,8 @@ function spiegelFlaeche(geo, teich, karte, cfg) {
       uniform sampler2D tSpiegel;
       uniform sampler2D tNormal;
       uniform vec3 farbe;
+      uniform float karte;
+      uniform vec3 kartenFarbe;
       uniform float toenung;
       uniform float zeit;
       uniform float wellen;
@@ -424,7 +452,12 @@ function spiegelFlaeche(geo, teich, karte, cfg) {
         vec3 blick = normalize(cameraPosition - vWelt);
         float f = pow(1.0 - clamp(blick.y, 0.0, 1.0), 2.5);
         float anteil = mix(1.0, 0.12 + 0.80 * f, toenung);
-        gl_FragColor = vec4(mix(farbe, gespiegelt, anteil), 1.0);
+        vec3 ergebnis = mix(farbe, gespiegelt, anteil);
+        // IN DER KARTE FAELLT ALLES DAVON WEG. Ueberblendet statt verzweigt:
+        // karte ist 0 oder 1, und ein Zweig im Fragmentshader kostet mehr,
+        // als er hier spart.
+        ergebnis = mix(ergebnis, kartenFarbe, karte);
+        gl_FragColor = vec4(ergebnis, 1.0);
         // OHNE DIESE ZEILE IST DAS WASSER TINTE.
         //
         // Derselbe Fehler, den buildSky in scene.js schon einmal hatte: eine
@@ -463,7 +496,15 @@ function spiegelFlaeche(geo, teich, karte, cfg) {
     // In der Vogelperspektive blickt eine ORTHOGRAFISCHE Kamera auf den Garten.
     // Fuer die taugt die Konstruktion nicht, und gebraucht wird sie dort auch
     // nicht: die Karte ist eine Zeichnung, kein Bild.
-    if (!camera.isPerspectiveCamera) return;
+    //
+    // Der Shader muss das WISSEN. Sonst zeigte er weiter das Renderziel her,
+    // und darin steht noch das letzte Spiegelbild aus der Augenhoehe - genau
+    // die Streifen, die quer ueber dem Teich lagen. Gesetzt wird die Kennung
+    // deshalb VOR dem Abbruch; three laedt die Uniforms erst danach hoch, der
+    // Wert gilt also schon fuer diesen Zug.
+    const inKarte = !camera.isPerspectiveCamera;
+    material.uniforms.karte.value = inKarte ? 1 : 0;
+    if (inKarte) return;
 
     // DAS ZIEL BEKOMMT DAS SEITENVERHAELTNIS DES BILDES, in CSS-Punkten.
     // Quadratisch gerechnet waere es zwar in sich stimmig - die Texturmatrix

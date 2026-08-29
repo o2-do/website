@@ -112,6 +112,27 @@ window.addEventListener('garten-ausgang', (e) => exitGarden(e.detail));
 
 let plaketten = [];
 
+/**
+ * WELCHER GARTEN GEBAUT WIRD, STEHT IN DER SEITE - NICHT HIER.
+ *
+ * `<meta name="garten" content="json/default.json">` im Kopf der Seite. So
+ * teilen sich `index.html` und `game.html` dasselbe Programm und zeigen
+ * trotzdem verschiedene Gaerten; ohne die Angabe gilt `json/garten.json`.
+ *
+ * WARUM EIN META-ELEMENT und kein zweites Skript in der Seite: `game.js` ist
+ * ein Modul. Was darin steht - `rohwerte`, `rebuild`, `viewer` -, gehoert dem
+ * Modul und ist von aussen nicht zu sehen; ein `<script>` daneben faende
+ * nichts davon vor. Und aufgeschobene Module laufen NACH dem Auszeichnen der
+ * Seite, ein Element im Kopf steht also in jedem Fall schon da.
+ */
+const GARTEN_VORGABE = 'json/garten.json';
+
+function gartenDatei() {
+  const m = document.querySelector('meta[name="garten"]');
+  const url = m && m.content && m.content.trim();
+  return url || GARTEN_VORGABE;
+}
+
 async function ladeEinstellungen(url) {
   const r = await fetch(frisch(url), { cache: 'no-cache' });
   if (!r.ok) throw new Error(`„${url}“ liess sich nicht laden (${r.status}).`);
@@ -500,14 +521,31 @@ canvas.addEventListener('wheel', (e) => {
  */
 const plakettenKnopf = document.getElementById('plakette-knopf');
 const plakettenNrFeld = document.getElementById('plakette-nr');
+const plakettenHinweis = document.getElementById('plakette-hinweis');
 let greifbar = -1;
+
+/**
+ * DER HINWEIS ZUR ERSTEN PLAKETTE.
+ *
+ * Dass der gelbe Knopf ein Knopf ist, sieht man ihm nicht an - er sieht aus
+ * wie das, was er zeigt. Einmal muss also jemand sagen, was damit zu tun ist.
+ *
+ * Genau einmal: die Blase steht, solange noch keine einzige Marke eingesammelt
+ * ist. Mit der ersten ist sie beantwortet und kommt nicht wieder - auch nicht
+ * bei der zweiten, denn ein Hinweis, den man schon befolgt hat, ist keiner
+ * mehr, sondern eine Ermahnung.
+ */
+function zeigeHinweis(an) {
+  if (plakettenHinweis) plakettenHinweis.hidden = !an;
+}
 
 function zeigeGreifbar(i) {
   if (i === greifbar) return;
   greifbar = i;
-  if (i < 0) { plakettenKnopf.hidden = true; return; }
+  if (i < 0) { plakettenKnopf.hidden = true; zeigeHinweis(false); return; }
   plakettenNrFeld.textContent = plaketten[i] ? plaketten[i].nr : '';
   plakettenKnopf.hidden = false;
+  zeigeHinweis(!plaketten.some((q) => q.weg));
 }
 
 /* ---------------- Seiteninhalt ---------------- */
@@ -753,6 +791,9 @@ async function sammlePlakette() {
 }
 
 plakettenKnopf.addEventListener('click', (e) => { e.preventDefault(); sammlePlakette(); });
+if (plakettenHinweis) {
+  plakettenHinweis.addEventListener('click', (e) => { e.preventDefault(); sammlePlakette(); });
+}
 
 // Platzhalter, bis das Spiel den Haken ersetzt. Er wird nicht ueberschrieben,
 // wenn schon einer da ist.
@@ -807,7 +848,27 @@ viewer.onFrame((dt) => {
 
 /* ---------------- Start ---------------- */
 
-rohwerte = await ladeEinstellungen('json/garten.json');
-await rebuild();
+/**
+ * Einen anderen Garten laden und aufbauen.
+ *
+ * Die Einstellungsdatei bringt ihre eigenen Plaketten mit, der Stand faengt
+ * also von vorn an: nichts gesammelt, der Ausgang wieder zu, kein Pokal. Die
+ * Seitenspalte bekommt zurueck, was beim Laden der Seite darin stand.
+ */
+const seiteAnfang = seite ? seite.innerHTML : '';
 
-window.__spiel = { THREE, viewer, walker, get garden() { return garden; }, rebuild };
+async function ladeGarten(url) {
+  rohwerte = await ladeEinstellungen(url);
+  gewonnen = false;
+  zeigePokal(false);
+  zeigeGreifbar(-1);
+  if (seite) seite.innerHTML = seiteAnfang;
+  await rebuild();
+  return rohwerte;
+}
+
+await ladeGarten(gartenDatei());
+
+window.__spiel = {
+  THREE, viewer, walker, get garden() { return garden; }, rebuild, ladeGarten,
+};

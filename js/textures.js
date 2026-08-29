@@ -22,7 +22,7 @@ export async function loadTextures(renderer) {
     // es noch nicht; die Wiesenkachel liest sich unter der Drehung und der
     // engen Wiederholung des Konfigurators als dichtes Gruen.
     zypresse: 'img/zypresse.jpg',
-    wellen: 'water/waternormals.jpg',   // Normalkarte der Wasseroberflaeche
+    wellen: 'img/waternormals.jpg',   // Normalkarte der Wasseroberflaeche
     granit: 'img/granit.jpg',           // Treppenstufen, 1 m je Kachel
     plakette: 'img/plakette.jpg',       // Vorderseite der Sammelmarken
   };

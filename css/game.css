@@ -54,6 +54,55 @@ body, .btn {
   .plakette-knopf { left: .75rem; bottom: 2rem; width: 52px; height: 52px; }
 }
 
+/* DIE SPRECHBLASE ZUR ERSTEN PLAKETTE.
+
+    Sie steht ueber dem Plakettenknopf, nicht daneben: rechts davon liegt auf
+    dem Telefon das Steuerkreuz, und eine Blase, die sich mit den Pfeilen
+    ueberschneidet, waere im Weg statt im Blick. Der Zipfel unten links zeigt
+    auf den Knopf und macht aus zwei Dingen eines.
+
+    Die untere Kante rechnet mit der Lage des Knopfes: sein Abstand vom Rand,
+    seine Hoehe, etwas Luft. Wird der Knopf verschoben, wandert sie mit - aber
+    nur, wenn beide Werte hier nachgezogen werden. */
+.plakette-hinweis {
+  position: absolute;
+  left: 1rem;
+  bottom: calc(128px + 41px + .55rem);
+  max-width: min(15rem, calc(100% - 2rem));
+  padding: .4rem .7rem;
+  border: 2px solid #eecc00;
+  border-radius: .5rem;
+  background: #fffbe6;
+  color: #232323;
+  font-size: .9rem;
+  line-height: 1.25;
+  text-align: left;
+  box-shadow: 0 .25rem .75rem rgba(0, 0, 0, .3);
+  z-index: 5;
+  animation: plakette-auf .25s ease-out;
+}
+.plakette-hinweis[hidden] { display: none; }
+/* Der Zipfel: zwei uebereinanderliegende Dreiecke, das untere in der
+    Rahmenfarbe, das obere in der Fuellung - so bekommt auch die Spitze ihre
+    Kante. */
+.plakette-hinweis::before,
+.plakette-hinweis::after {
+  content: "";
+  position: absolute;
+  left: 1.1rem;
+  width: 0; height: 0;
+  border-left: .5rem solid transparent;
+  border-right: .5rem solid transparent;
+}
+.plakette-hinweis::before {
+  bottom: -.55rem;
+  border-top: .55rem solid #eecc00;
+}
+.plakette-hinweis::after {
+  bottom: -.3rem;
+  border-top: .55rem solid #fffbe6;
+}
+
 /* Die Liste der gesammelten Plaketten in der Seitenspalte: je Marke ein
     kleiner Block mit Symbol und Nummer, der ihre Seite wieder aufruft. */
 .plakette-liste { display: flex; flex-wrap: wrap; gap: .5rem; }
@@ -265,4 +314,23 @@ body, .btn {
   .zoom-regler.an { display: block; }
   /* Randlos heisst auch: unter der Buehne liegt nichts mehr. */
   .szene { --unter-buehne: 0px; }
+  /* HIER MUSS DIE BLASE HOEHER, ALS DER KNOPF ES VERLANGT.
+     Auf dem Telefon liegt das Steuerkreuz IM Bild, unten mittig, und seine
+     obere Reihe reicht bis 8,4 rem ueber den Rand. Dicht ueber dem Knopf
+     laege die Blase quer darueber und verdeckte den Vorwaertspfeil - den
+     Knopf also, den man als naechstes braucht. Daneben passt sie nicht: bis
+     zum Steuerkreuz bleiben keine fuenf Zentimeter.
+     Also darueber. Der Zipfel zeigt weiterhin nach unten, und der Knopf steht
+     in derselben Spalte darunter - die Zuordnung bleibt lesbar.
+
+     Und sie MUSS hier stehen und nicht oben beim Knopf: gleiche Spezifitaet
+     entscheidet nach Reihenfolge, und die Grundregel der Blase steht weiter
+     unten in der Datei als der Media-Block des Knopfes. */
+  .plakette-hinweis { left: .75rem; bottom: 9rem; }
+}
+footer {
+  margin-top:100px;
+}
+footer * {
+  font-size: 1rem; line-height:120%;
 }

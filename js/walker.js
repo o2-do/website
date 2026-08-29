@@ -22,7 +22,18 @@ const RAMP = 0.775;
 const VMAX = 1 / RAMP;          // Aktionen pro Sekunde bei voller Fahrt
 const MAX_PENDING = 2;          // wartende Klicks zusaetzlich zum laufenden
 const STEP_M = 1.0;             // 1 m vor bzw. zurueck
-const STEP_RAD = Math.PI / 6;   // 30 Grad
+/**
+ * WIE WEIT EINE SEITWAERTSANWEISUNG DREHT: 15 Grad, immer.
+ *
+ * Eine Aktion dauert immer gleich lang, gleich was sie tut (siehe das
+ * Geschwindigkeitsprofil oben). Der Drehwinkel je Aktion IST damit die
+ * Drehgeschwindigkeit - und fuer das SCHNELLE Umsehen gibt es bereits ein
+ * besseres Mittel als die Taste: das Ziehen mit Maus oder Finger dreht so weit
+ * und so rasch, wie man will. Die Taste muss deshalb nicht beides koennen; sie
+ * darf sich ganz auf das feine Ausrichten verlegen, und dafuer sind 30 Grad zu
+ * grob gewesen.
+ */
+const STEP_RAD = Math.PI / 12;  // 15 Grad
 const EYE = 1.5;                // Augenhoehe
 const RETURN = 0.9;             // Ruecklaufdauer der Neigung in s
 const PITCH_MAX = 1.2;          // ~69 Grad
@@ -31,7 +42,7 @@ const SLOPE_LAG = 0.35;         // Zeitkonstante der Neigungsnachfuehrung in s
 
 const ss = (x) => { const t = Math.min(1, Math.max(0, x)); return t * t * (3 - 2 * t); };
 
-/** Wieviel eine Aktion an der Blickrichtung dreht, in Vielfachen von 30 Grad. */
+/** Wieviel eine Aktion an der Blickrichtung dreht, in Vielfachen von 15 Grad. */
 const drehsinn = (a) => {
   if (a.type === 'left') return +1;
   if (a.type === 'right') return -1;
@@ -312,7 +323,7 @@ export function createWalker(camera, getHeight) {
      *      zur Kurve statt zu Ecke-und-Gerade. Wer drei Schritte eingereiht hat
      *      und abbiegen will, meint „an der naechsten Ecke", nicht „in drei
      *      Metern".
-     *   3. SONST hinten anhaengen. Zweimal rechts sind dann sechzig Grad -
+     *   3. SONST hinten anhaengen. Zweimal rechts sind dann dreissig Grad -
      *      ohne Geradeaus dazwischen ist das genau, was gemeint ist.
      */
     enqueueTurn(dir) {
