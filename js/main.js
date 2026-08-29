@@ -468,6 +468,10 @@ const RICHTUNG = {
 window.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT') return;
   if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.key === 'v') {
+    toggleBirdView();
+    return;
+  }
   const was = RICHTUNG[e.key.length === 1 ? e.key.toLowerCase() : e.key];
   if (!was) return;
   if (was === 'vor') walker.enqueue('forward');
@@ -621,15 +625,20 @@ canvas.addEventListener('wheel', (e) => {
   viewer.zoom(Math.sign(e.deltaY) * 3);
 }, { passive: false });
 
-document.getElementById('btn-bird').addEventListener('click', (e) => {
+
+document.getElementById('btn-bird').addEventListener('click', toggleBirdView);
+
+function toggleBirdView() {
   const bird = !viewer.isBird();
   viewer.setCamera(bird ? 'bird' : 'walk');
-  e.target.textContent = bird ? 'Augenhöhe 1,50 m' : 'Vogelperspektive';
-  // Die Karte hat ihre eigene Schattenstufe (siehe `schattenAnwenden`).
+  const btn = document.getElementById('btn-bird');
+  if (btn) {
+    btn.textContent = bird ? 'Augenhöhe 1,50 m' : 'Vogelperspektive';
+  }
   const cfg = readForm();
   schattenAnwenden(cfg);
   schattenEinbrennen(cfg);
-});
+}
 
 /* ---------------- Plaketten setzen ---------------- */
 

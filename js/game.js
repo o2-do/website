@@ -258,12 +258,14 @@ function zeigeKartenknopf(bird) {
   zeigeZoomRegler(bird);
 }
 
-bind('btn-karte', () => {
+bind('btn-karte', () => { toggleBirdView(); });
+
+function toggleBirdView() {
   const bird = !viewer.isBird();
   viewer.setCamera(bird ? 'bird' : 'walk');
   zeigeKartenknopf(bird);
   schattenAnwenden(normalize(rohwerte));
-});
+}
 
 // DELEGIERT, nicht fest gebunden: der Inhaltsbereich wird beim Einsammeln
 // ausgetauscht, und die nachgeladenen Seiten bringen denselben Knopf wieder mit.
@@ -288,6 +290,11 @@ const RICHTUNG = {
 window.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
   if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.key === 'v') {
+    e.preventDefault();
+    toggleBirdView();
+    return;
+  }
   // Leertaste: die Plakette in Reichweite einsammeln. Sie kommt vor der
   // Laufsteuerung, damit ein Druck nicht beides tut.
   if (e.code === 'Space' || e.key === ' ') {
